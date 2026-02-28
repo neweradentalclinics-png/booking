@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>حجز موعد - NEW ERA DENTAL CENTER</title>
+    
+    <!-- React & Babel -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        gold: { 400: '#FBBF24', 500: '#F59E0B', 600: '#D97706' }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- Firebase -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Cairo', sans-serif; background-color: #FDFCFB; }
+        .animate-fade-in { animation: fadeIn 0.4s ease-in-out; }
+        .animate-slide-up { animation: slideUp 0.5s ease-out; }
+        .animate-scale-in { animation: scaleIn 0.3s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes scaleIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
+        
+        .time-slot:checked + label {
+            background-color: #F59E0B;
+            color: white;
+            border-color: #F59E0B;
+            box-shadow: 0 4px 14px rgba(245, 158, 11, 0.4);
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        // --- إعدادات نفس قاعدة البيانات ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyDQ17UevaMBy2aVYxsrLNpdQCvn92uSKi0",
+            authDomain: "new-era-dental-center.firebaseapp.com",
+            projectId: "new-era-dental-center",
+            storageBucket: "new-era-dental-center.firebasestorage.app",
+            messagingSenderId: "11521109321",
+            appId: "1:11521109321:web:49e24509d937ff3e20be98"
+        };
+
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const db = firebase.firestore();
+        const auth = firebase.auth();
+
+        // --- الأيقونات ---
+        const IconCheck = ({size=24}) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>;
+        const IconX = ({size=24}) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>;
+        const IconCalendar = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>;
+        const IconClock = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>;
+        const IconPhone = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>;
+        const IconTrash = () => <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>;
+
+        const generateBookingCode = () => {
+            const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+            let result = '';
+            for (let i = 0; i < 5; i++) result += chars.charAt(Math.floor(Math.random() * chars.length));
+            return result;
+        };
+
+        const generateTimeSlots = () => {
+            const slots = [];
+            for (let i = 16; i <= 21; i++) {
+                let hour12 = i > 12 ? i - 12 : i;
+                slots.push({ value: `${i}:00`, label: `${hour12}:00 م` });
+                slots.push({ value: `${i}:30`, label: `${hour12}:30 م` });
+            }
+            slots.push({ value: `22:00`, label: `10:00 م` });
+            return slots;
+        };
+
+        function App() {
+            const [view, setView] = useState('home'); 
+            const [branches, setBranches] = useState([]);
+            const [allAppointments, setAppointments] = useState([]);
+            const [formData, setFormData] = useState({
+                patientName: '', phone: '', branchId: '', service: '', date: '', time: ''
+            });
+            const [isLoading, setIsLoading] = useState(false);
+            const [bookingResult, setBookingResult] = useState(null);
+            const [searchCode, setSearchCode] = useState('');
+            const [searchError, setSearchError] = useState('');
+
+            // النوافذ المنبثقة الذكية بدلاً من alert و confirm
+            const [customAlert, setCustomAlert] = useState(null); // { type: 'success'|'error', title: '', msg: '' }
+            const [confirmAction, setConfirmAction] = useState(null); // { msg: '', onConfirm: ()=>void }
+
+            useEffect(() => {
+                auth.signInAnonymously().catch(err => console.error("Auth Error:", err));
+                const unsubBranches = db.collection('branches').onSnapshot(s => setBranches(s.docs.map(d => ({id: d.id, ...d.data()}))));
+                const unsubApps = db.collection('appointments').onSnapshot(s => setAppointments(s.docs.map(d => ({id: d.id, ...d.data()}))));
+                return () => { unsubBranches(); unsubApps(); };
+            }, []);
+
+            const availableSlots = useMemo(() => {
+                if (!formData.date || !formData.branchId) return [];
+                const allSlots = generateTimeSlots();
+                const bookedTimes = allAppointments
+                    .filter(app => app.date === formData.date && app.branchId === formData.branchId)
+                    .map(app => app.time);
+                
+                let currentAppTime = null;
+                if(view === 'manage' && bookingResult) {
+                    currentAppTime = bookingResult.time;
+                }
+                return allSlots.filter(slot => !bookedTimes.includes(slot.value) || slot.value === currentAppTime);
+            }, [formData.date, formData.branchId, allAppointments, view, bookingResult]);
+
+            const handleInputChange = (e) => {
+                setFormData({ ...formData, [e.target.name]: e.target.value });
+                if(e.target.name === 'date' || e.target.name === 'branchId') {
+                    setFormData(prev => ({...prev, time: ''}));
+                }
+            };
+
+            const submitBooking = async (e) => {
+                e.preventDefault();
+                if (!formData.time) {
+                    setCustomAlert({ type: 'error', title: 'تنبيه', msg: 'برجاء اختيار الوقت المناسب من المربعات المتاحة بالأسفل.' });
+                    return;
+                }
+                setIsLoading(true);
+                try {
+                    const code = generateBookingCode();
+                    const appointmentData = { ...formData, bookingCode: code, createdAt: new Date().toISOString() };
+                    await db.collection('appointments').add(appointmentData);
+                    const selectedBranch = branches.find(b => b.id === formData.branchId);
+                    setBookingResult({ ...appointmentData, branchName: selectedBranch?.name, branchPhone: selectedBranch?.phone });
+                    setView('success');
+                } catch (error) {
+                    setCustomAlert({ type: 'error', title: 'خطأ', msg: 'عفواً، حدث خطأ أثناء الحجز. تأكد من اتصالك بالإنترنت.' });
+                }
+                setIsLoading(false);
+            };
+
+            const searchBooking = async (e) => {
+                e.preventDefault();
+                setSearchError('');
+                setIsLoading(true);
+                try {
+                    const snapshot = await db.collection('appointments').where('bookingCode', '==', searchCode.toUpperCase().trim()).get();
+                    if (snapshot.empty) {
+                        setSearchError('عفواً، لا يوجد حجز بهذا الكود.');
+                    } else {
+                        const appData = snapshot.docs[0].data();
+                        const appId = snapshot.docs[0].id;
+                        setBookingResult({ id: appId, ...appData });
+                        setFormData({
+                            patientName: appData.patientName,
+                            phone: appData.phone,
+                            branchId: appData.branchId,
+                            service: appData.service || '',
+                            date: appData.date,
+                            time: appData.time
+                        });
+                        setView('manage');
+                    }
+                } catch (error) {
+                    setSearchError('حدث خطأ في البحث.');
+                }
+                setIsLoading(false);
+            };
+
+            const updateBooking = async (e) => {
+                e.preventDefault();
+                if (!formData.time) {
+                    setCustomAlert({ type: 'error', title: 'تنبيه', msg: 'برجاء اختيار وقت الموعد' });
+                    return;
+                }
+                setIsLoading(true);
+                try {
+                    await db.collection('appointments').doc(bookingResult.id).update(formData);
+                    const selectedBranch = branches.find(b => b.id === formData.branchId);
+                    setBookingResult({ ...bookingResult, ...formData, branchName: selectedBranch?.name, branchPhone: selectedBranch?.phone });
+                    setCustomAlert({ type: 'success', title: 'تم بنجاح', msg: 'تم تعديل الموعد بنجاح.' });
+                    setView('success');
+                } catch(err) { 
+                    setCustomAlert({ type: 'error', title: 'خطأ', msg: 'حدث خطأ في التعديل.' });
+                }
+                setIsLoading(false);
+            };
+
+            const triggerCancelBooking = () => {
+                // فتح نافذة التأكيد الذكية
+                setConfirmAction({
+                    msg: 'هل أنت متأكد من إلغاء هذا الموعد نهائياً؟',
+                    onConfirm: async () => {
+                        setConfirmAction(null);
+                        setIsLoading(true);
+                        try {
+                            await db.collection('appointments').doc(bookingResult.id).delete();
+                            setCustomAlert({ type: 'success', title: 'تم الإلغاء', msg: 'تم إلغاء موعدك بنجاح.' });
+                            setView('home');
+                            setSearchCode('');
+                            setFormData({ patientName: '', phone: '', branchId: '', service: '', date: '', time: '' });
+                        } catch(e) {
+                            setCustomAlert({ type: 'error', title: 'خطأ', msg: 'حدث خطأ أثناء الإلغاء.' });
+                        }
+                        setIsLoading(false);
+                    }
+                });
+            };
+
+            const renderHeader = () => (
+                <div className="text-center mb-10 pt-8 animate-fade-in">
+                    <img src="https://i.ibb.co/qLw7Tcqv/logo-Dr-shahenda-original.png" alt="New Era Logo" className="mx-auto h-24 mb-4 drop-shadow-md" />
+                    <h1 className="text-2xl font-black text-gray-800 tracking-wider">NEW ERA CLINIC</h1>
+                    <p className="text-gold-600 font-bold text-sm tracking-widest mt-1">بـوابـة حـجـوزات الـمـرضـى</p>
+                </div>
+            );
+
+            return (
+                <div className="min-h-screen relative">
+                    {/* --- نافذة التنبيهات الذكية --- */}
+                    {customAlert && (
+                        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-[999] flex items-center justify-center p-4 animate-fade-in">
+                            <div className="bg-white w-full max-w-sm rounded-[30px] shadow-2xl p-6 text-center animate-scale-in">
+                                <div className={`w-16 h-16 rounded-full mx-auto flex items-center justify-center mb-4 ${customAlert.type === 'error' ? 'bg-red-50 text-red-500' : 'bg-emerald-50 text-emerald-500'}`}>
+                                    {customAlert.type === 'error' ? <IconX size={32}/> : <IconCheck size={32}/>}
+                                </div>
+                                <h3 className="text-xl font-black text-gray-800 mb-2">{customAlert.title}</h3>
+                                <p className="text-gray-500 font-bold mb-6 text-sm">{customAlert.msg}</p>
+                                <button onClick={() => setCustomAlert(null)} className={`w-full py-3 rounded-2xl font-black text-white transition-transform hover:scale-105 ${customAlert.type === 'error' ? 'bg-red-500' : 'bg-emerald-500'}`}>حسناً، فهمت</button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* --- نافذة تأكيد الإلغاء الذكية --- */}
+                    {confirmAction && (
+                        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-[999] flex items-center justify-center p-4 animate-fade-in">
+                            <div className="bg-white w-full max-w-sm rounded-[30px] shadow-2xl p-6 text-center animate-scale-in">
+                                <div className="w-16 h-16 rounded-full bg-red-50 text-red-500 mx-auto flex items-center justify-center mb-4">
+                                    <IconTrash />
+                                </div>
+                                <h3 className="text-xl font-black text-gray-800 mb-2">تأكيد الإلغاء</h3>
+                                <p className="text-gray-500 font-bold mb-6 text-sm">{confirmAction.msg}</p>
+                                <div className="flex gap-3">
+                                    <button onClick={confirmAction.onConfirm} className="flex-1 py-3 bg-red-500 text-white rounded-2xl font-black hover:bg-red-600 transition-colors">نعم، إلغاء</button>
+                                    <button onClick={() => setConfirmAction(null)} className="flex-1 py-3 bg-gray-100 text-gray-700 rounded-2xl font-black hover:bg-gray-200 transition-colors">تراجع</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* --- واجهة الحجز الرئيسية --- */}
+                    {view === 'home' && (
+                        <div className="pb-12 px-4 flex flex-col items-center">
+                            {renderHeader()}
+                            <div className="w-full max-w-xl bg-white rounded-[40px] shadow-[0_15px_50px_rgb(0,0,0,0.06)] border border-gray-100 p-8 animate-slide-up">
+                                <h2 className="text-xl font-black text-gray-800 mb-6 flex items-center gap-2 border-b border-gray-100 pb-4"><IconCalendar/> سجل موعدك الآن</h2>
+                                <form onSubmit={submitBooking} className="space-y-5">
+                                    <div className="space-y-1">
+                                        <label className="text-xs font-bold text-gray-500">الاسم الثلاثي *</label>
+                                        <input required name="patientName" value={formData.patientName} onChange={handleInputChange} className="w-full bg-gray-50 border border-gray-200 p-4 rounded-2xl outline-none focus:border-gold-500 font-bold transition-colors" placeholder="ادخل اسمك بالكامل" />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <label className="text-xs font-bold text-gray-500">رقم الموبايل للتواصل *</label>
+                                        <input required type="tel" name="phone" value={formData.phone} onChange={handleInputChange} className="w-full bg-gray-50 border border-gray-200 p-4 rounded-2xl outline-none focus:border-gold-500 font-bold text-left transition-colors" placeholder="01xxxxxxxxx" dir="ltr" />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <label className="text-xs font-bold text-gray-500">نوع الخدمة المطلوبة</label>
+                                        <input name="service" value={formData.service} onChange={handleInputChange} className="w-full bg-gray-50 border border-gray-200 p-4 rounded-2xl outline-none focus:border-gold-500 font-bold transition-colors" placeholder="مثال: كشف، حشو، تبييض..." />
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div className="space-y-1">
+                                            <label className="text-xs font-bold text-gray-500">الفرع *</label>
+                                            <select required name="branchId" value={formData.branchId} onChange={handleInputChange} className="w-full bg-gray-50 border border-gray-200 p-4 rounded-2xl outline-none focus:border-gold-500 font-bold text-gray-800">
+                                                <option value="">اختر الفرع...</option>
+                                                {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                                            </select>
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-xs font-bold text-gray-500">تاريخ الزيارة *</label>
+                                            <input required type="date" name="date" value={formData.date} onChange={handleInputChange} min={new Date().toISOString().split('T')[0]} className="w-full bg-gray-50 border border-gray-200 p-4 rounded-2xl outline-none focus:border-gold-500 font-bold text-gray-800" />
+                                        </div>
+                                    </div>
+                                    {formData.date && formData.branchId && (
+                                        <div className="pt-4 border-t border-gray-100 animate-fade-in">
+                                            <label className="text-xs font-bold text-gray-500 mb-3 block">اختر الوقت المناسب (المتاح فقط) *</label>
+                                            {availableSlots.length > 0 ? (
+                                                <div className="grid grid-cols-3 md:grid-cols-4 gap-3" dir="ltr">
+                                                    {availableSlots.map(slot => (
+                                                        <button 
+                                                            key={slot.value} type="button" onClick={() => setFormData({...formData, time: slot.value})}
+                                                            className={`flex items-center justify-center w-full py-3 rounded-xl text-xs font-bold transition-all text-center border-2 ${
+                                                                formData.time === slot.value 
+                                                                ? 'bg-gold-500 text-white border-gold-500 shadow-[0_4px_14px_rgba(245,158,11,0.4)]' 
+                                                                : 'bg-white text-gray-600 border-gray-100 hover:border-gold-300'
+                                                            }`}
+                                                        >{slot.label}</button>
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <p className="text-sm font-bold text-red-500 bg-red-50 p-4 rounded-xl text-center">عفواً، لا توجد مواعيد متاحة في هذا اليوم.</p>
+                                            )}
+                                        </div>
+                                    )}
+                                    <button disabled={isLoading} type="submit" className="w-full mt-6 bg-gradient-to-r from-gold-600 to-gold-400 text-white font-black py-5 rounded-2xl shadow-lg shadow-gold-500/30 hover:scale-[1.02] transition-transform text-lg flex justify-center items-center">
+                                        {isLoading ? 'جاري التأكيد...' : 'تأكيد الحجز الآن'}
+                                    </button>
+                                </form>
+                            </div>
+
+                            <div className="mt-8 text-center animate-fade-in w-full max-w-sm">
+                                <p className="text-sm text-gray-500 font-bold mb-4">هل قمت بالحجز مسبقاً؟</p>
+                                <form onSubmit={searchBooking} className="flex">
+                                    <input required value={searchCode} onChange={e=>setSearchCode(e.target.value)} placeholder="أدخل كود الحجز هنا" className="bg-white border-y border-r border-gray-200 p-4 rounded-r-2xl outline-none focus:border-gold-500 font-mono tracking-widest font-bold w-full uppercase text-center" />
+                                    <button disabled={isLoading} type="submit" className="bg-gray-800 text-white px-6 font-bold rounded-l-2xl hover:bg-black transition-colors">بحث</button>
+                                </form>
+                                {searchError && <p className="text-red-500 text-xs font-bold mt-3">{searchError}</p>}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* --- واجهة النجاح وتأكيد الموعد --- */}
+                    {view === 'success' && (
+                        <div className="pb-12 pt-8 px-4 flex flex-col items-center">
+                            <div className="w-full max-w-md bg-white rounded-[40px] shadow-2xl p-8 text-center animate-slide-up relative overflow-hidden">
+                                <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-gold-400 to-gold-600"></div>
+                                <div className="flex justify-center mb-6"><IconCheck size={56} className="text-emerald-500" /></div>
+                                <h2 className="text-3xl font-black text-gray-800 mb-2">تم الحجز بنجاح!</h2>
+                                <p className="text-sm text-gray-500 font-bold mb-8">ننتظر تشريفك لنا في الموعد المحدد.</p>
+                                
+                                <div className="bg-gray-50 rounded-3xl p-6 text-right mb-8 border border-gray-100">
+                                    <p className="text-xs text-gray-400 font-bold mb-1">اسم المريض</p>
+                                    <p className="font-black text-lg text-gray-800 mb-4">{bookingResult.patientName}</p>
+                                    <div className="grid grid-cols-2 gap-4 mb-4">
+                                        <div className="bg-white p-3 rounded-xl shadow-sm border border-gray-100">
+                                            <p className="text-[10px] text-gray-400 font-bold flex items-center gap-1 mb-1"><IconCalendar/> التاريخ</p>
+                                            <p className="font-bold text-gray-800">{bookingResult.date}</p>
+                                        </div>
+                                        <div className="bg-white p-3 rounded-xl shadow-sm border border-gray-100">
+                                            <p className="text-[10px] text-gray-400 font-bold flex items-center gap-1 mb-1"><IconClock/> الوقت</p>
+                                            <p className="font-bold text-gray-800" dir="ltr">{bookingResult.time}</p>
+                                        </div>
+                                    </div>
+                                    <p className="text-[10px] text-gray-400 font-bold mb-1">الفرع المختار</p>
+                                    <p className="font-bold text-gold-600 mb-4">{bookingResult.branchName}</p>
+                                    {bookingResult.branchPhone && (
+                                        <div className="flex items-center gap-2 text-sm font-bold text-gray-600 bg-white p-3 rounded-xl">
+                                            <IconPhone/> للتواصل: <span dir="ltr">{bookingResult.branchPhone}</span>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="bg-gold-50 border-2 border-gold-200 rounded-3xl p-6 mb-8 border-dashed">
+                                    <p className="text-xs text-gold-700 font-bold mb-2">كود الحجز السري الخاص بك</p>
+                                    <p className="text-4xl font-black font-mono tracking-[0.3em] text-gold-600">{bookingResult.bookingCode}</p>
+                                    <p className="text-[10px] text-gray-500 font-bold mt-3">احتفظ بهذا الكود، ستحتاجه إذا أردت تعديل أو إلغاء الموعد لاحقاً.</p>
+                                </div>
+
+                                <button onClick={() => {setView('home'); setFormData({patientName:'',phone:'',branchId:'',service:'',date:'',time:''});}} className="w-full bg-gray-800 text-white font-bold py-4 rounded-2xl hover:bg-black transition-colors">العودة للرئيسية</button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* --- واجهة إدارة الحجز (التعديل/الإلغاء) --- */}
+                    {view === 'manage' && (
+                        <div className="pb-12 px-4 flex flex-col items-center">
+                            {renderHeader()}
+                            <div className="w-full max-w-xl bg-white rounded-[40px] shadow-xl border border-gray-100 p-8 animate-slide-up">
+                                <div className="flex justify-between items-center mb-6 border-b border-gray-100 pb-4">
+                                    <h2 className="text-xl font-black text-gray-800">إدارة موعدك</h2>
+                                    <span className="bg-gold-100 text-gold-700 px-3 py-1 rounded-lg font-mono font-bold">{bookingResult.bookingCode}</span>
+                                </div>
+                                <form onSubmit={updateBooking} className="space-y-5">
+                                    <div className="space-y-1">
+                                        <label className="text-xs font-bold text-gray-500">الاسم</label>
+                                        <input required name="patientName" value={formData.patientName} onChange={handleInputChange} className="w-full bg-gray-50 border border-gray-200 p-4 rounded-2xl outline-none focus:border-gold-500 font-bold" />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <label className="text-xs font-bold text-gray-500">رقم الموبايل</label>
+                                        <input required type="tel" name="phone" value={formData.phone} onChange={handleInputChange} className="w-full bg-gray-50 border border-gray-200 p-4 rounded-2xl outline-none focus:border-gold-500 font-bold text-left" dir="ltr" />
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div className="space-y-1">
+                                            <label className="text-xs font-bold text-gray-500">الفرع</label>
+                                            <select required name="branchId" value={formData.branchId} onChange={handleInputChange} className="w-full bg-gray-50 border border-gray-200 p-4 rounded-2xl outline-none focus:border-gold-500 font-bold text-gray-800">
+                                                {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                                            </select>
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-xs font-bold text-gray-500">تاريخ الزيارة</label>
+                                            <input required type="date" name="date" value={formData.date} onChange={handleInputChange} min={new Date().toISOString().split('T')[0]} className="w-full bg-gray-50 border border-gray-200 p-4 rounded-2xl outline-none focus:border-gold-500 font-bold text-gray-800" />
+                                        </div>
+                                    </div>
+                                    {formData.date && formData.branchId && (
+                                        <div className="pt-4 border-t border-gray-100">
+                                            <label className="text-xs font-bold text-gray-500 mb-3 block">اختر الوقت الجديد</label>
+                                            <div className="grid grid-cols-3 md:grid-cols-4 gap-3" dir="ltr">
+                                                {availableSlots.map(slot => (
+                                                    <button 
+                                                        key={slot.value} type="button" onClick={() => setFormData({...formData, time: slot.value})}
+                                                        className={`flex items-center justify-center w-full py-3 rounded-xl text-xs font-bold transition-all text-center border-2 ${
+                                                            formData.time === slot.value 
+                                                            ? 'bg-gold-500 text-white border-gold-500 shadow-[0_4px_14px_rgba(245,158,11,0.4)]' 
+                                                            : 'bg-white text-gray-600 border-gray-100 hover:border-gold-300'
+                                                        }`}
+                                                    >{slot.label}</button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                    <div className="flex gap-3 pt-6">
+                                        <button disabled={isLoading} type="submit" className="flex-1 bg-gold-500 text-white font-black py-4 rounded-2xl shadow-lg hover:bg-gold-600 transition-colors">تحديث الموعد</button>
+                                        <button disabled={isLoading} type="button" onClick={triggerCancelBooking} className="px-6 bg-red-50 text-red-600 font-black py-4 rounded-2xl border border-red-100 hover:bg-red-500 hover:text-white transition-colors">إلغاء الموعد</button>
+                                    </div>
+                                    <button type="button" onClick={() => setView('home')} className="w-full text-gray-400 font-bold mt-4 hover:text-gray-800 transition-colors">الرجوع للرئيسية</button>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
