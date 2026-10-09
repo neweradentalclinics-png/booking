@@ -81,7 +81,7 @@
         const generateBookingCode = () => {
             const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
             let result = '';
-            for (let i = 0; i < 5; i++) result += chars.charAt(Math.floor(Math.random() * chars.length));
+            for (let i = 0; i < 8; i++) result += chars.charAt(Math.floor(Math.random() * chars.length));
             return result;
         };
 
@@ -116,9 +116,9 @@
             const [customAlert, setCustomAlert] = useState(null); // { type: 'success'|'error', title: '', msg: '' }
             const [confirmAction, setConfirmAction] = useState(null); // { msg: '', onConfirm: ()=>void }
 
-            useEffect(() => {
-                auth.signInAnonymously().catch(err => console.error("Auth Error:", err)).finally(() => setAuthReady(true));
-            }, []);
+            // صفحة الحجز مش محتاجة تسجيل دخول خالص (القواعد بتسمح بالحجز من غير حساب).
+            // كده مش بتطرد الموظف لو فاتح السيستم على نفس الدومين.
+            useEffect(() => { setAuthReady(true); }, []);
 
             // بيانات عامة بس: الفروع + الأطباء (اسم وفروع)
             useEffect(() => {
@@ -147,7 +147,10 @@
                     .map(x => x.time));
                 const own = (view === 'manage' && bookingResult && bookingResult.branchId === formData.branchId
                     && (bookingResult.doctorId || '') === formData.doctorId && bookingResult.date === formData.date) ? bookingResult.time : null;
-                return generateTimeSlots().filter(slot => !booked.has(slot.value) || slot.value === own);
+                const now = new Date();
+                const todayLocal = now.toLocaleDateString('en-CA');
+                const isPast = v => { if (formData.date !== todayLocal) return false; const [h, m] = v.split(':').map(Number); return h * 60 + m <= now.getHours() * 60 + now.getMinutes(); };
+                return generateTimeSlots().filter(slot => (!booked.has(slot.value) && !isPast(slot.value)) || slot.value === own);
             }, [formData.date, formData.branchId, formData.doctorId, dateSlots, view, bookingResult]);
 
             const handleInputChange = (e) => {
@@ -189,7 +192,7 @@
                                 if (bs.exists) throw new Error('CODE_TAKEN');
                                 tx.set(appRef, appointmentData);
                                 tx.set(bookRef, { appointmentId: appRef.id });
-                                tx.set(slotRef, { branchId, doctorId, date, time, at: Date.now() });
+                                tx.set(slotRef, { branchId, doctorId, date, time, at: Date.now(), appId: appRef.id });
                             });
                             result = { id: appRef.id, ...appointmentData };
                         } catch (err) { if (err.message !== 'CODE_TAKEN') throw err; }
@@ -269,11 +272,11 @@
                             const newSlotRef = db.collection('booked_slots').doc(newSid);
                             const ss = await tx.get(newSlotRef);
                             if (ss.exists) throw new Error('SLOT_TAKEN');
-                            tx.set(newSlotRef, { branchId, doctorId, date, time, at: Date.now() });
+                            tx.set(newSlotRef, { branchId, doctorId, date, time, at: Date.now(), appId: old.id });
                         }
                         tx.update(appRef, upd);
                     });
-                    if (newSid !== oldSid) db.collection('booked_slots').doc(oldSid).delete().catch(() => {});
+                    // الوقت القديم بيتفضّى تلقائياً من السيستم (المريض مش مسموح له يمسح أوقات)
                     setBookingResult({ ...old, ...upd, branchName: selectedBranch?.name, branchPhone: selectedBranch?.phone });
                     setCustomAlert({ type: 'success', title: 'تم بنجاح', msg: 'تم تعديل الموعد بنجاح.' });
                     setView('success');
@@ -304,7 +307,6 @@
                             b.delete(db.collection('appointments').doc(old.id));
                             if (old.bookingCode) b.delete(db.collection('online_bookings').doc(old.bookingCode));
                             await b.commit();
-                            db.collection('booked_slots').doc(slotId(old.branchId, old.doctorId, old.date, old.time)).delete().catch(() => {});
                             setCustomAlert({ type: 'success', title: 'تم الإلغاء', msg: 'تم إلغاء موعدك بنجاح.' });
                             setView('home');
                             setSearchCode('');
