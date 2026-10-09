@@ -97,6 +97,12 @@
         };
 
         const slotId = (branchId, doctorId, date, time) => [branchId, doctorId || 'none', date, time].join('_');
+        // أيام عمل الدكتور في الفرع (من السيستم). لو مفيش أيام متحددة = متاح كل الأيام
+        const doctorWorks = (doc, branchId, date) => {
+            const days = doc && doc.days && doc.days[branchId];
+            if (!date || !Array.isArray(days) || !days.length) return true;
+            return days.includes(new Date(date + 'T00:00:00').getDay());
+        };
 
         function App() {
             const [view, setView] = useState('home'); 
@@ -140,8 +146,12 @@
                 return doctors.filter(d => Array.isArray(d.branchIds) && d.branchIds.includes(formData.branchId));
             }, [doctors, formData.branchId]);
 
+            const doctorOff = useMemo(() => {
+                if (!formData.date || !formData.branchId || !formData.doctorId) return false;
+                return !doctorWorks(doctors.find(d => d.id === formData.doctorId), formData.branchId, formData.date);
+            }, [doctors, formData.date, formData.branchId, formData.doctorId]);
             const availableSlots = useMemo(() => {
-                if (!formData.date || !formData.branchId || !formData.doctorId) return [];
+                if (!formData.date || !formData.branchId || !formData.doctorId || doctorOff) return [];
                 const booked = new Set(dateSlots
                     .filter(x => x.branchId === formData.branchId && (x.doctorId || '') === formData.doctorId)
                     .map(x => x.time));
@@ -151,7 +161,7 @@
                 const todayLocal = now.toLocaleDateString('en-CA');
                 const isPast = v => { if (formData.date !== todayLocal) return false; const [h, m] = v.split(':').map(Number); return h * 60 + m <= now.getHours() * 60 + now.getMinutes(); };
                 return generateTimeSlots().filter(slot => (!booked.has(slot.value) && !isPast(slot.value)) || slot.value === own);
-            }, [formData.date, formData.branchId, formData.doctorId, dateSlots, view, bookingResult]);
+            }, [formData.date, formData.branchId, formData.doctorId, dateSlots, view, bookingResult, doctorOff]);
 
             const handleInputChange = (e) => {
                 const { name, value } = e.target;
@@ -165,6 +175,7 @@
 
             const submitBooking = async (e) => {
                 e.preventDefault();
+                if (doctorOff) { setCustomAlert({ type: 'error', title: 'الدكتور غير متاح', msg: 'الدكتور مش متاح في اليوم ده، اختار يوم تاني.' }); return; }
                 if (!formData.time) {
                     setCustomAlert({ type: 'error', title: 'تنبيه', msg: 'برجاء اختيار الوقت المناسب من المربعات المتاحة بالأسفل.' });
                     return;
@@ -248,6 +259,7 @@
 
             const updateBooking = async (e) => {
                 e.preventDefault();
+                if (doctorOff) { setCustomAlert({ type: 'error', title: 'الدكتور غير متاح', msg: 'الدكتور مش متاح في اليوم ده، اختار يوم تاني.' }); return; }
                 if (!formData.time) {
                     setCustomAlert({ type: 'error', title: 'تنبيه', msg: 'برجاء اختيار وقت الموعد' });
                     return;
@@ -303,10 +315,8 @@
                         setIsLoading(true);
                         try {
                             const old = bookingResult;
-                            const b = db.batch();
-                            b.delete(db.collection('appointments').doc(old.id));
-                            if (old.bookingCode) b.delete(db.collection('online_bookings').doc(old.bookingCode));
-                            await b.commit();
+                            // الحجز مش بيتمسح: بيتعلّم "كنسل" عشان العيادة تتابع مع المريض، والوقت بيتفضّى تلقائي
+                            await db.collection('appointments').doc(old.id).update({ status: 'canceled', canceledAt: new Date().toISOString(), canceledBy: 'patient' });
                             setCustomAlert({ type: 'success', title: 'تم الإلغاء', msg: 'تم إلغاء موعدك بنجاح.' });
                             setView('home');
                             setSearchCode('');
@@ -417,7 +427,7 @@
                                                     ))}
                                                 </div>
                                             ) : (
-                                                <p className="text-sm font-bold text-red-500 bg-red-50 p-4 rounded-xl text-center">عفواً، لا توجد مواعيد متاحة في هذا اليوم.</p>
+                                                <p className="text-sm font-bold text-red-500 bg-red-50 p-4 rounded-xl text-center">{doctorOff ? 'الدكتور غير متاح في اليوم ده — اختار يوم تاني أو دكتور تاني.' : 'عفواً، لا توجد مواعيد متاحة في هذا اليوم.'}</p>
                                             )}
                                         </div>
                                     )}
@@ -521,6 +531,7 @@
                                     {formData.date && formData.branchId && formData.doctorId && (
                                         <div className="pt-4 border-t border-gray-100">
                                             <label className="text-xs font-bold text-gray-500 mb-3 block">اختر الوقت الجديد</label>
+                                            {doctorOff && <p className="text-sm font-bold text-red-500 bg-red-50 p-4 rounded-xl text-center">الدكتور غير متاح في اليوم ده — اختار يوم تاني أو دكتور تاني.</p>}
                                             <div className="grid grid-cols-3 md:grid-cols-4 gap-3" dir="ltr">
                                                 {availableSlots.map(slot => (
                                                     <button 
