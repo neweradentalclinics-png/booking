@@ -96,12 +96,16 @@
             return slots;
         };
 
+        const slotId = (branchId, doctorId, date, time) => [branchId, doctorId || 'none', date, time].join('_');
+
         function App() {
             const [view, setView] = useState('home'); 
             const [branches, setBranches] = useState([]);
-            const [allAppointments, setAppointments] = useState([]);
+            const [doctors, setDoctors] = useState([]);
+            const [dateSlots, setDateSlots] = useState([]);
+            const [authReady, setAuthReady] = useState(false);
             const [formData, setFormData] = useState({
-                patientName: '', phone: '', branchId: '', service: '', date: '', time: ''
+                patientName: '', phone: '', branchId: '', doctorId: '', service: '', date: '', time: ''
             });
             const [isLoading, setIsLoading] = useState(false);
             const [bookingResult, setBookingResult] = useState(null);
@@ -113,31 +117,47 @@
             const [confirmAction, setConfirmAction] = useState(null); // { msg: '', onConfirm: ()=>void }
 
             useEffect(() => {
-                auth.signInAnonymously().catch(err => console.error("Auth Error:", err));
-                const unsubBranches = db.collection('branches').onSnapshot(s => setBranches(s.docs.map(d => ({id: d.id, ...d.data()}))));
-                const unsubApps = db.collection('appointments').onSnapshot(s => setAppointments(s.docs.map(d => ({id: d.id, ...d.data()}))));
-                return () => { unsubBranches(); unsubApps(); };
+                auth.signInAnonymously().catch(err => console.error("Auth Error:", err)).finally(() => setAuthReady(true));
             }, []);
 
+            // بيانات عامة بس: الفروع + الأطباء (اسم وفروع)
+            useEffect(() => {
+                if (!authReady) return;
+                const u1 = db.collection('branches').onSnapshot(s => setBranches(s.docs.map(d => ({id: d.id, ...d.data()}))), e => console.error(e));
+                const u2 = db.collection('public_doctors').onSnapshot(s => setDoctors(s.docs.map(d => ({id: d.id, ...d.data()}))), e => console.error(e));
+                return () => { u1(); u2(); };
+            }, [authReady]);
+
+            // الأوقات المحجوزة في اليوم المختار (من غير أي بيانات مرضى)
+            useEffect(() => {
+                if (!authReady || !formData.date) { setDateSlots([]); return; }
+                return db.collection('booked_slots').where('date', '==', formData.date)
+                    .onSnapshot(s => setDateSlots(s.docs.map(d => ({id: d.id, ...d.data()}))), e => console.error(e));
+            }, [authReady, formData.date]);
+
+            const branchDoctors = useMemo(() => {
+                if (!formData.branchId) return [];
+                return doctors.filter(d => Array.isArray(d.branchIds) && d.branchIds.includes(formData.branchId));
+            }, [doctors, formData.branchId]);
+
             const availableSlots = useMemo(() => {
-                if (!formData.date || !formData.branchId) return [];
-                const allSlots = generateTimeSlots();
-                const bookedTimes = allAppointments
-                    .filter(app => app.date === formData.date && app.branchId === formData.branchId)
-                    .map(app => app.time);
-                
-                let currentAppTime = null;
-                if(view === 'manage' && bookingResult) {
-                    currentAppTime = bookingResult.time;
-                }
-                return allSlots.filter(slot => !bookedTimes.includes(slot.value) || slot.value === currentAppTime);
-            }, [formData.date, formData.branchId, allAppointments, view, bookingResult]);
+                if (!formData.date || !formData.branchId || !formData.doctorId) return [];
+                const booked = new Set(dateSlots
+                    .filter(x => x.branchId === formData.branchId && (x.doctorId || '') === formData.doctorId)
+                    .map(x => x.time));
+                const own = (view === 'manage' && bookingResult && bookingResult.branchId === formData.branchId
+                    && (bookingResult.doctorId || '') === formData.doctorId && bookingResult.date === formData.date) ? bookingResult.time : null;
+                return generateTimeSlots().filter(slot => !booked.has(slot.value) || slot.value === own);
+            }, [formData.date, formData.branchId, formData.doctorId, dateSlots, view, bookingResult]);
 
             const handleInputChange = (e) => {
-                setFormData({ ...formData, [e.target.name]: e.target.value });
-                if(e.target.name === 'date' || e.target.name === 'branchId') {
-                    setFormData(prev => ({...prev, time: ''}));
-                }
+                const { name, value } = e.target;
+                setFormData(prev => {
+                    const next = { ...prev, [name]: value };
+                    if (name === 'branchId') { next.doctorId = ''; next.time = ''; }
+                    else if (name === 'date' || name === 'doctorId') { next.time = ''; }
+                    return next;
+                });
             };
 
             const submitBooking = async (e) => {
@@ -148,14 +168,43 @@
                 }
                 setIsLoading(true);
                 try {
-                    const code = generateBookingCode();
-                    const appointmentData = { ...formData, bookingCode: code, createdAt: new Date().toISOString() };
-                    await db.collection('appointments').add(appointmentData);
+                    const doctor = doctors.find(d => d.id === formData.doctorId);
                     const selectedBranch = branches.find(b => b.id === formData.branchId);
-                    setBookingResult({ ...appointmentData, branchName: selectedBranch?.name, branchPhone: selectedBranch?.phone });
+                    const { branchId, doctorId, date, time } = formData;
+                    const slotRef = db.collection('booked_slots').doc(slotId(branchId, doctorId, date, time));
+                    let result = null;
+                    for (let attempt = 0; attempt < 5 && !result; attempt++) {
+                        const code = generateBookingCode();
+                        const appRef = db.collection('appointments').doc();
+                        const bookRef = db.collection('online_bookings').doc(code);
+                        const appointmentData = {
+                            patientName: formData.patientName.trim(), phone: formData.phone.trim(),
+                            branchId, doctorId, doctorName: doctor?.name || '', service: formData.service.trim(),
+                            date, time, bookingCode: code, source: 'online', status: 'unconfirmed', createdAt: new Date().toISOString()
+                        };
+                        try {
+                            await db.runTransaction(async tx => {
+                                const [bs, ss] = await Promise.all([tx.get(bookRef), tx.get(slotRef)]);
+                                if (ss.exists) throw new Error('SLOT_TAKEN');
+                                if (bs.exists) throw new Error('CODE_TAKEN');
+                                tx.set(appRef, appointmentData);
+                                tx.set(bookRef, { appointmentId: appRef.id });
+                                tx.set(slotRef, { branchId, doctorId, date, time, at: Date.now() });
+                            });
+                            result = { id: appRef.id, ...appointmentData };
+                        } catch (err) { if (err.message !== 'CODE_TAKEN') throw err; }
+                    }
+                    if (!result) throw new Error('CODE_TAKEN');
+                    setBookingResult({ ...result, branchName: selectedBranch?.name, branchPhone: selectedBranch?.phone });
                     setView('success');
                 } catch (error) {
-                    setCustomAlert({ type: 'error', title: 'خطأ', msg: 'عفواً، حدث خطأ أثناء الحجز. تأكد من اتصالك بالإنترنت.' });
+                    console.error(error);
+                    if (error.message === 'SLOT_TAKEN') {
+                        setFormData(prev => ({ ...prev, time: '' }));
+                        setCustomAlert({ type: 'error', title: 'الموعد اتحجز', msg: 'للأسف حد حجز الموعد ده قبلك، اختر وقت تاني من المتاح.' });
+                    } else {
+                        setCustomAlert({ type: 'error', title: 'خطأ', msg: 'عفواً، حدث خطأ أثناء الحجز. تأكد من اتصالك بالإنترنت.' });
+                    }
                 }
                 setIsLoading(false);
             };
@@ -163,19 +212,24 @@
             const searchBooking = async (e) => {
                 e.preventDefault();
                 setSearchError('');
+                const code = searchCode.toUpperCase().trim();
+                if (!/^[A-Z0-9]{3,12}$/.test(code)) { setSearchError('عفواً، لا يوجد حجز بهذا الكود.'); return; }
                 setIsLoading(true);
                 try {
-                    const snapshot = await db.collection('appointments').where('bookingCode', '==', searchCode.toUpperCase().trim()).get();
-                    if (snapshot.empty) {
+                    const bk = await db.collection('online_bookings').doc(code).get();
+                    const ap = bk.exists ? await db.collection('appointments').doc(bk.data().appointmentId).get() : null;
+                    if (!ap || !ap.exists) {
                         setSearchError('عفواً، لا يوجد حجز بهذا الكود.');
+                    } else if (ap.data().status === 'canceled') {
+                        setSearchError('الحجز ده ملغي. تواصل مع الفرع لو محتاج موعد جديد.');
                     } else {
-                        const appData = snapshot.docs[0].data();
-                        const appId = snapshot.docs[0].id;
-                        setBookingResult({ id: appId, ...appData });
+                        const appData = ap.data();
+                        setBookingResult({ id: ap.id, ...appData });
                         setFormData({
                             patientName: appData.patientName,
                             phone: appData.phone,
                             branchId: appData.branchId,
+                            doctorId: appData.doctorId || '',
                             service: appData.service || '',
                             date: appData.date,
                             time: appData.time
@@ -183,6 +237,7 @@
                         setView('manage');
                     }
                 } catch (error) {
+                    console.error(error);
                     setSearchError('حدث خطأ في البحث.');
                 }
                 setIsLoading(false);
@@ -196,13 +251,42 @@
                 }
                 setIsLoading(true);
                 try {
-                    await db.collection('appointments').doc(bookingResult.id).update(formData);
+                    const old = bookingResult;
+                    const doctor = doctors.find(d => d.id === formData.doctorId);
                     const selectedBranch = branches.find(b => b.id === formData.branchId);
-                    setBookingResult({ ...bookingResult, ...formData, branchName: selectedBranch?.name, branchPhone: selectedBranch?.phone });
+                    const { branchId, doctorId, date, time } = formData;
+                    const oldSid = slotId(old.branchId, old.doctorId, old.date, old.time);
+                    const newSid = slotId(branchId, doctorId, date, time);
+                    const upd = {
+                        patientName: formData.patientName.trim(), phone: formData.phone.trim(),
+                        branchId, doctorId, doctorName: doctor?.name || '', service: (formData.service || '').trim(), date, time
+                    };
+                    const appRef = db.collection('appointments').doc(old.id);
+                    await db.runTransaction(async tx => {
+                        const cur = await tx.get(appRef);
+                        if (!cur.exists) throw new Error('GONE');
+                        if (newSid !== oldSid) {
+                            const newSlotRef = db.collection('booked_slots').doc(newSid);
+                            const ss = await tx.get(newSlotRef);
+                            if (ss.exists) throw new Error('SLOT_TAKEN');
+                            tx.set(newSlotRef, { branchId, doctorId, date, time, at: Date.now() });
+                        }
+                        tx.update(appRef, upd);
+                    });
+                    if (newSid !== oldSid) db.collection('booked_slots').doc(oldSid).delete().catch(() => {});
+                    setBookingResult({ ...old, ...upd, branchName: selectedBranch?.name, branchPhone: selectedBranch?.phone });
                     setCustomAlert({ type: 'success', title: 'تم بنجاح', msg: 'تم تعديل الموعد بنجاح.' });
                     setView('success');
                 } catch(err) { 
-                    setCustomAlert({ type: 'error', title: 'خطأ', msg: 'حدث خطأ في التعديل.' });
+                    console.error(err);
+                    if (err.message === 'SLOT_TAKEN') {
+                        setFormData(prev => ({ ...prev, time: '' }));
+                        setCustomAlert({ type: 'error', title: 'الموعد اتحجز', msg: 'للأسف حد حجز الموعد ده قبلك، اختر وقت تاني من المتاح.' });
+                    } else if (err.message === 'GONE') {
+                        setCustomAlert({ type: 'error', title: 'خطأ', msg: 'الحجز ده لم يعد موجوداً.' });
+                    } else {
+                        setCustomAlert({ type: 'error', title: 'خطأ', msg: 'حدث خطأ في التعديل.' });
+                    }
                 }
                 setIsLoading(false);
             };
@@ -215,12 +299,18 @@
                         setConfirmAction(null);
                         setIsLoading(true);
                         try {
-                            await db.collection('appointments').doc(bookingResult.id).delete();
+                            const old = bookingResult;
+                            const b = db.batch();
+                            b.delete(db.collection('appointments').doc(old.id));
+                            if (old.bookingCode) b.delete(db.collection('online_bookings').doc(old.bookingCode));
+                            await b.commit();
+                            db.collection('booked_slots').doc(slotId(old.branchId, old.doctorId, old.date, old.time)).delete().catch(() => {});
                             setCustomAlert({ type: 'success', title: 'تم الإلغاء', msg: 'تم إلغاء موعدك بنجاح.' });
                             setView('home');
                             setSearchCode('');
-                            setFormData({ patientName: '', phone: '', branchId: '', service: '', date: '', time: '' });
+                            setFormData({ patientName: '', phone: '', branchId: '', doctorId: '', service: '', date: '', time: '' });
                         } catch(e) {
+                            console.error(e);
                             setCustomAlert({ type: 'error', title: 'خطأ', msg: 'حدث خطأ أثناء الإلغاء.' });
                         }
                         setIsLoading(false);
@@ -301,7 +391,14 @@
                                             <input required type="date" name="date" value={formData.date} onChange={handleInputChange} min={new Date().toISOString().split('T')[0]} className="w-full bg-gray-50 border border-gray-200 p-4 rounded-2xl outline-none focus:border-gold-500 font-bold text-gray-800" />
                                         </div>
                                     </div>
-                                    {formData.date && formData.branchId && (
+                                    <div className="space-y-1">
+                                        <label className="text-xs font-bold text-gray-500">الدكتور *</label>
+                                        <select required name="doctorId" value={formData.doctorId} onChange={handleInputChange} disabled={!formData.branchId} className="w-full bg-gray-50 border border-gray-200 p-4 rounded-2xl outline-none focus:border-gold-500 font-bold text-gray-800 disabled:opacity-50">
+                                            <option value="">{formData.branchId ? 'اختر الدكتور...' : 'اختر الفرع أولاً'}</option>
+                                            {branchDoctors.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                                        </select>
+                                    </div>
+                                    {formData.date && formData.branchId && formData.doctorId && (
                                         <div className="pt-4 border-t border-gray-100 animate-fade-in">
                                             <label className="text-xs font-bold text-gray-500 mb-3 block">اختر الوقت المناسب (المتاح فقط) *</label>
                                             {availableSlots.length > 0 ? (
@@ -361,6 +458,7 @@
                                             <p className="font-bold text-gray-800" dir="ltr">{bookingResult.time}</p>
                                         </div>
                                     </div>
+                                    {bookingResult.doctorName && (<><p className="text-[10px] text-gray-400 font-bold mb-1">الدكتور</p><p className="font-bold text-gray-800 mb-4">{bookingResult.doctorName}</p></>)}
                                     <p className="text-[10px] text-gray-400 font-bold mb-1">الفرع المختار</p>
                                     <p className="font-bold text-gold-600 mb-4">{bookingResult.branchName}</p>
                                     {bookingResult.branchPhone && (
@@ -376,7 +474,7 @@
                                     <p className="text-[10px] text-gray-500 font-bold mt-3">احتفظ بهذا الكود، ستحتاجه إذا أردت تعديل أو إلغاء الموعد لاحقاً.</p>
                                 </div>
 
-                                <button onClick={() => {setView('home'); setFormData({patientName:'',phone:'',branchId:'',service:'',date:'',time:''});}} className="w-full bg-gray-800 text-white font-bold py-4 rounded-2xl hover:bg-black transition-colors">العودة للرئيسية</button>
+                                <button onClick={() => {setView('home'); setFormData({patientName:'',phone:'',branchId:'',doctorId:'',service:'',date:'',time:''});}} className="w-full bg-gray-800 text-white font-bold py-4 rounded-2xl hover:bg-black transition-colors">العودة للرئيسية</button>
                             </div>
                         </div>
                     )}
@@ -411,7 +509,14 @@
                                             <input required type="date" name="date" value={formData.date} onChange={handleInputChange} min={new Date().toISOString().split('T')[0]} className="w-full bg-gray-50 border border-gray-200 p-4 rounded-2xl outline-none focus:border-gold-500 font-bold text-gray-800" />
                                         </div>
                                     </div>
-                                    {formData.date && formData.branchId && (
+                                    <div className="space-y-1">
+                                        <label className="text-xs font-bold text-gray-500">الدكتور</label>
+                                        <select required name="doctorId" value={formData.doctorId} onChange={handleInputChange} disabled={!formData.branchId} className="w-full bg-gray-50 border border-gray-200 p-4 rounded-2xl outline-none focus:border-gold-500 font-bold text-gray-800 disabled:opacity-50">
+                                            <option value="">{formData.branchId ? 'اختر الدكتور...' : 'اختر الفرع أولاً'}</option>
+                                            {branchDoctors.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                                        </select>
+                                    </div>
+                                    {formData.date && formData.branchId && formData.doctorId && (
                                         <div className="pt-4 border-t border-gray-100">
                                             <label className="text-xs font-bold text-gray-500 mb-3 block">اختر الوقت الجديد</label>
                                             <div className="grid grid-cols-3 md:grid-cols-4 gap-3" dir="ltr">
