@@ -276,6 +276,8 @@
                         patientName: formData.patientName.trim(), phone: formData.phone.trim(),
                         branchId, doctorId, doctorName: doctor?.name || '', service: (formData.service || '').trim(), date, time
                     };
+                    // لو الميعاد أو الدكتور اتغيّر: بنسجل القديم عشان العيادة والدكتور يوصلهم إشعار بالتعديل
+                    if (date !== old.date || time !== old.time || doctorId !== (old.doctorId || '')) Object.assign(upd, { rescheduledAt: new Date().toISOString(), rescheduledBy: 'patient', prevDate: old.date || '', prevTime: old.time || '', prevDoctorId: old.doctorId || '', prevDoctorName: old.doctorName || '' });
                     const appRef = db.collection('appointments').doc(old.id);
                     await db.runTransaction(async tx => {
                         const cur = await tx.get(appRef);
