@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>حجز موعد - NEW ERA DENTAL CENTER</title>
+    <title>حجز موعد واستشارة — NEW ERA DENTAL CENTER</title>
     
     <!-- React & Babel -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -17,7 +17,7 @@
             theme: {
                 extend: {
                     colors: {
-                        gold: { 400: '#FBBF24', 500: '#F59E0B', 600: '#D97706' }
+                        gold: { 50: '#FFFBEB', 100: '#FEF3C7', 200: '#FDE68A', 300: '#FCD34D', 400: '#FBBF24', 500: '#F59E0B', 600: '#D97706', 700: '#B45309' }
                     }
                 }
             }
@@ -52,7 +52,7 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useMemo } = React;
+        const { useState, useEffect, useMemo, useRef } = React;
 
         // --- إعدادات نفس قاعدة البيانات ---
         const firebaseConfig = {
@@ -63,506 +63,415 @@
             messagingSenderId: "11521109321",
             appId: "1:11521109321:web:49e24509d937ff3e20be98"
         };
-
-        if (!firebase.apps.length) {
-            firebase.initializeApp(firebaseConfig);
-        }
+        if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
-        const auth = firebase.auth();
 
-        // --- الأيقونات ---
-        const IconCheck = ({size=24}) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>;
-        const IconX = ({size=24}) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>;
-        const IconCalendar = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>;
-        const IconClock = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>;
-        const IconPhone = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>;
-        const IconTrash = () => <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>;
+        // --- إعدادات الصفحة من الرابط: embed=1 (جوه الموقع) / lang=en / tab=book|consult|track / service=اسم الخدمة ---
+        const QS = new URLSearchParams(location.search);
+        const EMBED = QS.get('embed') === '1';
+        const LANG = QS.get('lang') === 'en' ? 'en' : 'ar';
+        const T = (ar, en) => LANG === 'en' ? en : ar;
+        document.documentElement.lang = LANG; document.documentElement.dir = LANG === 'en' ? 'ltr' : 'rtl';
+        if (EMBED) document.body.style.background = 'transparent';
 
-        const generateBookingCode = () => {
-            const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-            let result = '';
-            for (let i = 0; i < 8; i++) result += chars.charAt(Math.floor(Math.random() * chars.length));
-            return result;
+        // --- أدوات ---
+        const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+        const newCode = (n = 8) => { let r = ''; for (let i = 0; i < n; i++) r += CODE_CHARS.charAt(Math.floor(Math.random() * CODE_CHARS.length)); return r; };
+        const localDay = (d = new Date()) => d.toLocaleDateString('en-CA');
+        const SLOTS = (() => { const s = []; for (let i = 16; i <= 21; i++) { s.push(i + ':00', i + ':30'); } s.push('22:00'); return s; })();
+        const fmtTime = v => { const [h, m] = v.split(':').map(Number); return (h % 12 || 12) + ':' + String(m).padStart(2, '0') + ' ' + (h >= 12 ? T('م', 'PM') : T('ص', 'AM')); };
+        const slotId = (b, d, date, time) => [b, d || 'none', date, time].join('_');
+        const doctorWorks = (doc, branchId, date) => { const days = doc && doc.days && doc.days[branchId]; if (!date || !Array.isArray(days) || !days.length) return true; return days.includes(new Date(date + 'T00:00:00').getDay()); };
+        const num = x => Number(x) || 0;
+        const money = n => num(n).toLocaleString('en-US') + ' ' + T('ج', 'EGP');
+        const priceText = s => { const a = num(s.priceFrom), b = num(s.priceTo); if (!a && !b) return T('حسب الحالة', 'Varies'); return (!b || b === a) ? money(a) : num(a).toLocaleString('en-US') + ' – ' + money(b); };
+        // خريطة الفرع: كود التضمين من جوجل، أو رابط فيه إحداثيات، أو العنوان
+        const mapSrc = b => {
+            const e = String(b.mapEmbed || '').trim();
+            const m = e.match(/src=["']([^"']+)["']/); if (m) return m[1];
+            if (/^https:\/\/(www\.)?google\.[^/]+\/maps\/embed/.test(e)) return e;
+            const ll = String(b.mapsLink || '').match(/@(-?\d+\.\d+),(-?\d+\.\d+)/) || String(b.mapsLink || '').match(/[?&]q=(-?\d+\.\d+),(-?\d+\.\d+)/);
+            const q = ll ? ll[1] + ',' + ll[2] : (e || [b.name, b.address].filter(Boolean).join(' ') || 'New Era Dental Center');
+            return 'https://maps.google.com/maps?q=' + encodeURIComponent(q) + '&z=16&hl=' + LANG + '&output=embed';
         };
 
-        const generateTimeSlots = () => {
-            const slots = [];
-            for (let i = 16; i <= 21; i++) {
-                let hour12 = i > 12 ? i - 12 : i;
-                slots.push({ value: `${i}:00`, label: `${hour12}:00 م` });
-                slots.push({ value: `${i}:30`, label: `${hour12}:30 م` });
-            }
-            slots.push({ value: `22:00`, label: `10:00 م` });
-            return slots;
+        // --- أيقونات ---
+        const I = {
+            check: (s = 22) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>,
+            pin: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>,
+            clock: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
+            wait: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 22h14M5 2h14M17 22v-4.17a2 2 0 0 0-.59-1.42L12 12l-4.41 4.41A2 2 0 0 0 7 17.83V22M7 2v4.17a2 2 0 0 0 .59 1.42L12 12l4.41-4.41A2 2 0 0 0 17 6.17V2"/></svg>,
+            money: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2"/></svg>,
+            phone: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>,
+            x: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         };
 
-        const slotId = (branchId, doctorId, date, time) => [branchId, doctorId || 'none', date, time].join('_');
-        // أيام عمل الدكتور في الفرع (من السيستم). لو مفيش أيام متحددة = متاح كل الأيام
-        const doctorWorks = (doc, branchId, date) => {
-            const days = doc && doc.days && doc.days[branchId];
-            if (!date || !Array.isArray(days) || !days.length) return true;
-            return days.includes(new Date(date + 'T00:00:00').getDay());
-        };
-
-        function App() {
-            const [view, setView] = useState('home'); 
-            const [branches, setBranches] = useState([]);
-            const [doctors, setDoctors] = useState([]);
-            const [dateSlots, setDateSlots] = useState([]);
-            const [authReady, setAuthReady] = useState(false);
-            const [formData, setFormData] = useState({
-                patientName: '', phone: '', branchId: '', doctorId: '', service: '', date: '', time: ''
-            });
-            const [isLoading, setIsLoading] = useState(false);
-            const [bookingResult, setBookingResult] = useState(null);
-            const [searchCode, setSearchCode] = useState('');
-            const [searchError, setSearchError] = useState('');
-
-            // النوافذ المنبثقة الذكية بدلاً من alert و confirm
-            const [customAlert, setCustomAlert] = useState(null); // { type: 'success'|'error', title: '', msg: '' }
-            const [confirmAction, setConfirmAction] = useState(null); // { msg: '', onConfirm: ()=>void }
-
-            // صفحة الحجز مش محتاجة تسجيل دخول خالص (القواعد بتسمح بالحجز من غير حساب).
-            // كده مش بتطرد الموظف لو فاتح السيستم على نفس الدومين.
-            useEffect(() => { setAuthReady(true); }, []);
-
-            // بيانات عامة بس: الفروع + الأطباء (اسم وفروع)
+        // --- البيانات العامة (فروع، دكاترة، تخصصات، خدمات) ---
+        function usePublicData() {
+            const [st, setSt] = useState({ status: 'loading', branches: [], doctors: [], specialties: [], services: [] });
+            const [tryN, setTryN] = useState(0);
             useEffect(() => {
-                if (!authReady) return;
-                const u1 = db.collection('branches').onSnapshot(s => setBranches(s.docs.map(d => ({id: d.id, ...d.data()}))), e => console.error(e));
-                const u2 = db.collection('public_doctors').onSnapshot(s => setDoctors(s.docs.map(d => ({id: d.id, ...d.data()}))), e => console.error(e));
-                return () => { u1(); u2(); };
-            }, [authReady]);
+                const sortO = a => a.sort((x, y) => (x.order ?? 999) - (y.order ?? 999) || (x.name || '').localeCompare(y.name || '', 'ar'));
+                const map = s => s.docs.map(d => ({ id: d.id, ...d.data() }));
+                let t;
+                const fail = e => { console.error(e); setSt(p => p.status === 'ok' ? p : { ...p, status: 'error' }); t = setTimeout(() => setTryN(n => n + 1), 4000); };
+                const u = [
+                    db.collection('branches').onSnapshot(s => setSt(p => ({ ...p, status: 'ok', branches: sortO(map(s)) })), fail),
+                    db.collection('public_doctors').onSnapshot(s => setSt(p => ({ ...p, doctors: map(s) })), fail),
+                    db.collection('specialties').onSnapshot(s => setSt(p => ({ ...p, specialties: sortO(map(s)) })), () => {}),
+                    db.collection('services').onSnapshot(s => setSt(p => ({ ...p, services: sortO(map(s)).filter(x => x.active !== false) })), () => {})
+                ];
+                return () => { u.forEach(f => f()); clearTimeout(t); };
+            }, [tryN]);
+            return st;
+        }
 
-            // الأوقات المحجوزة في اليوم المختار (من غير أي بيانات مرضى)
-            useEffect(() => {
-                if (!authReady || !formData.date) { setDateSlots([]); return; }
-                return db.collection('booked_slots').where('date', '==', formData.date)
-                    .onSnapshot(s => setDateSlots(s.docs.map(d => ({id: d.id, ...d.data()}))), e => console.error(e));
-            }, [authReady, formData.date]);
-
-            const branchDoctors = useMemo(() => {
-                if (!formData.branchId) return [];
-                return doctors.filter(d => Array.isArray(d.branchIds) && d.branchIds.includes(formData.branchId));
-            }, [doctors, formData.branchId]);
-
-            const doctorOff = useMemo(() => {
-                if (!formData.date || !formData.branchId || !formData.doctorId) return false;
-                return !doctorWorks(doctors.find(d => d.id === formData.doctorId), formData.branchId, formData.date);
-            }, [doctors, formData.date, formData.branchId, formData.doctorId]);
-            const availableSlots = useMemo(() => {
-                if (!formData.date || !formData.branchId || !formData.doctorId || doctorOff) return [];
-                const booked = new Set(dateSlots
-                    .filter(x => x.branchId === formData.branchId && (x.doctorId || '') === formData.doctorId)
-                    .map(x => x.time));
-                const own = (view === 'manage' && bookingResult && bookingResult.branchId === formData.branchId
-                    && (bookingResult.doctorId || '') === formData.doctorId && bookingResult.date === formData.date) ? bookingResult.time : null;
-                const now = new Date();
-                const todayLocal = now.toLocaleDateString('en-CA');
-                const isPast = v => { if (formData.date !== todayLocal) return false; const [h, m] = v.split(':').map(Number); return h * 60 + m <= now.getHours() * 60 + now.getMinutes(); };
-                return generateTimeSlots().filter(slot => (!booked.has(slot.value) && !isPast(slot.value)) || slot.value === own);
-            }, [formData.date, formData.branchId, formData.doctorId, dateSlots, view, bookingResult, doctorOff]);
-
-            const handleInputChange = (e) => {
-                const { name, value } = e.target;
-                setFormData(prev => {
-                    const next = { ...prev, [name]: value };
-                    if (name === 'branchId') { next.doctorId = ''; next.time = ''; }
-                    else if (name === 'date' || name === 'doctorId') { next.time = ''; }
-                    return next;
-                });
-            };
-
-            const submitBooking = async (e) => {
-                e.preventDefault();
-                if (doctorOff) { setCustomAlert({ type: 'error', title: 'الدكتور غير متاح', msg: 'الدكتور مش متاح في اليوم ده، اختار يوم تاني.' }); return; }
-                if (!formData.time) {
-                    setCustomAlert({ type: 'error', title: 'تنبيه', msg: 'برجاء اختيار الوقت المناسب من المربعات المتاحة بالأسفل.' });
-                    return;
-                }
-                setIsLoading(true);
-                try {
-                    const doctor = doctors.find(d => d.id === formData.doctorId);
-                    const selectedBranch = branches.find(b => b.id === formData.branchId);
-                    const { branchId, doctorId, date, time } = formData;
-                    const slotRef = db.collection('booked_slots').doc(slotId(branchId, doctorId, date, time));
-                    let result = null;
-                    for (let attempt = 0; attempt < 5 && !result; attempt++) {
-                        const code = generateBookingCode();
-                        const appRef = db.collection('appointments').doc();
-                        const bookRef = db.collection('online_bookings').doc(code);
-                        const appointmentData = {
-                            patientName: formData.patientName.trim(), phone: formData.phone.trim(),
-                            branchId, doctorId, doctorName: doctor?.name || '', service: formData.service.trim(),
-                            date, time, bookingCode: code, source: 'online', status: 'unconfirmed', createdAt: new Date().toISOString()
-                        };
-                        try {
-                            await db.runTransaction(async tx => {
-                                const [bs, ss] = await Promise.all([tx.get(bookRef), tx.get(slotRef)]);
-                                if (ss.exists) throw new Error('SLOT_TAKEN');
-                                if (bs.exists) throw new Error('CODE_TAKEN');
-                                tx.set(appRef, appointmentData);
-                                tx.set(bookRef, { appointmentId: appRef.id });
-                                tx.set(slotRef, { branchId, doctorId, date, time, at: Date.now(), appId: appRef.id });
-                            });
-                            result = { id: appRef.id, ...appointmentData };
-                        } catch (err) { if (err.message !== 'CODE_TAKEN') throw err; }
-                    }
-                    if (!result) throw new Error('CODE_TAKEN');
-                    setBookingResult({ ...result, branchName: selectedBranch?.name, branchPhone: selectedBranch?.phone });
-                    setView('success');
-                } catch (error) {
-                    console.error(error);
-                    if (error.message === 'SLOT_TAKEN') {
-                        setFormData(prev => ({ ...prev, time: '' }));
-                        setCustomAlert({ type: 'error', title: 'الموعد اتحجز', msg: 'للأسف حد حجز الموعد ده قبلك، اختر وقت تاني من المتاح.' });
-                    } else {
-                        setCustomAlert({ type: 'error', title: 'خطأ', msg: 'عفواً، حدث خطأ أثناء الحجز. تأكد من اتصالك بالإنترنت.' });
-                    }
-                }
-                setIsLoading(false);
-            };
-
-            const searchBooking = async (e) => {
-                e.preventDefault();
-                setSearchError('');
-                const code = searchCode.toUpperCase().trim();
-                if (!/^[A-Z0-9]{3,12}$/.test(code)) { setSearchError('عفواً، لا يوجد حجز بهذا الكود.'); return; }
-                setIsLoading(true);
-                try {
-                    const bk = await db.collection('online_bookings').doc(code).get();
-                    const ap = bk.exists ? await db.collection('appointments').doc(bk.data().appointmentId).get() : null;
-                    if (!ap || !ap.exists) {
-                        setSearchError('عفواً، لا يوجد حجز بهذا الكود.');
-                    } else if (ap.data().status === 'canceled') {
-                        setSearchError('الحجز ده ملغي. تواصل مع الفرع لو محتاج موعد جديد.');
-                    } else {
-                        const appData = ap.data();
-                        setBookingResult({ id: ap.id, ...appData });
-                        setFormData({
-                            patientName: appData.patientName,
-                            phone: appData.phone,
-                            branchId: appData.branchId,
-                            doctorId: appData.doctorId || '',
-                            service: appData.service || '',
-                            date: appData.date,
-                            time: appData.time
-                        });
-                        setView('manage');
-                    }
-                } catch (error) {
-                    console.error(error);
-                    setSearchError('حدث خطأ في البحث.');
-                }
-                setIsLoading(false);
-            };
-
-            const updateBooking = async (e) => {
-                e.preventDefault();
-                if (doctorOff) { setCustomAlert({ type: 'error', title: 'الدكتور غير متاح', msg: 'الدكتور مش متاح في اليوم ده، اختار يوم تاني.' }); return; }
-                if (!formData.time) {
-                    setCustomAlert({ type: 'error', title: 'تنبيه', msg: 'برجاء اختيار وقت الموعد' });
-                    return;
-                }
-                setIsLoading(true);
-                try {
-                    const old = bookingResult;
-                    const doctor = doctors.find(d => d.id === formData.doctorId);
-                    const selectedBranch = branches.find(b => b.id === formData.branchId);
-                    const { branchId, doctorId, date, time } = formData;
-                    const oldSid = slotId(old.branchId, old.doctorId, old.date, old.time);
-                    const newSid = slotId(branchId, doctorId, date, time);
-                    const upd = {
-                        patientName: formData.patientName.trim(), phone: formData.phone.trim(),
-                        branchId, doctorId, doctorName: doctor?.name || '', service: (formData.service || '').trim(), date, time
-                    };
-                    // لو الميعاد أو الدكتور اتغيّر: بنسجل القديم عشان العيادة والدكتور يوصلهم إشعار بالتعديل
-                    if (date !== old.date || time !== old.time || doctorId !== (old.doctorId || '')) Object.assign(upd, { rescheduledAt: new Date().toISOString(), rescheduledBy: 'patient', prevDate: old.date || '', prevTime: old.time || '', prevDoctorId: old.doctorId || '', prevDoctorName: old.doctorName || '' });
-                    const appRef = db.collection('appointments').doc(old.id);
-                    await db.runTransaction(async tx => {
-                        const cur = await tx.get(appRef);
-                        if (!cur.exists) throw new Error('GONE');
-                        if (newSid !== oldSid) {
-                            const newSlotRef = db.collection('booked_slots').doc(newSid);
-                            const ss = await tx.get(newSlotRef);
-                            if (ss.exists) throw new Error('SLOT_TAKEN');
-                            tx.set(newSlotRef, { branchId, doctorId, date, time, at: Date.now(), appId: old.id });
-                        }
-                        tx.update(appRef, upd);
-                    });
-                    // الوقت القديم بيتفضّى تلقائياً من السيستم (المريض مش مسموح له يمسح أوقات)
-                    setBookingResult({ ...old, ...upd, branchName: selectedBranch?.name, branchPhone: selectedBranch?.phone });
-                    setCustomAlert({ type: 'success', title: 'تم بنجاح', msg: 'تم تعديل الموعد بنجاح.' });
-                    setView('success');
-                } catch(err) { 
-                    console.error(err);
-                    if (err.message === 'SLOT_TAKEN') {
-                        setFormData(prev => ({ ...prev, time: '' }));
-                        setCustomAlert({ type: 'error', title: 'الموعد اتحجز', msg: 'للأسف حد حجز الموعد ده قبلك، اختر وقت تاني من المتاح.' });
-                    } else if (err.message === 'GONE') {
-                        setCustomAlert({ type: 'error', title: 'خطأ', msg: 'الحجز ده لم يعد موجوداً.' });
-                    } else {
-                        setCustomAlert({ type: 'error', title: 'خطأ', msg: 'حدث خطأ في التعديل.' });
-                    }
-                }
-                setIsLoading(false);
-            };
-
-            const triggerCancelBooking = () => {
-                // فتح نافذة التأكيد الذكية
-                setConfirmAction({
-                    msg: 'هل أنت متأكد من إلغاء هذا الموعد نهائياً؟',
-                    onConfirm: async () => {
-                        setConfirmAction(null);
-                        setIsLoading(true);
-                        try {
-                            const old = bookingResult;
-                            // الحجز مش بيتمسح: بيتعلّم "كنسل" عشان العيادة تتابع مع المريض، والوقت بيتفضّى تلقائي
-                            await db.collection('appointments').doc(old.id).update({ status: 'canceled', canceledAt: new Date().toISOString(), canceledBy: 'patient' });
-                            setCustomAlert({ type: 'success', title: 'تم الإلغاء', msg: 'تم إلغاء موعدك بنجاح.' });
-                            setView('home');
-                            setSearchCode('');
-                            setFormData({ patientName: '', phone: '', branchId: '', doctorId: '', service: '', date: '', time: '' });
-                        } catch(e) {
-                            console.error(e);
-                            setCustomAlert({ type: 'error', title: 'خطأ', msg: 'حدث خطأ أثناء الإلغاء.' });
-                        }
-                        setIsLoading(false);
-                    }
-                });
-            };
-
-            const renderHeader = () => (
-                <div className="text-center mb-10 pt-8 animate-fade-in">
-                    <img src="https://i.ibb.co/qLw7Tcqv/logo-Dr-shahenda-original.png" alt="New Era Logo" className="mx-auto h-24 mb-4 drop-shadow-md" />
-                    <h1 className="text-2xl font-black text-gray-800 tracking-wider">NEW ERA CLINIC</h1>
-                    <p className="text-gold-600 font-bold text-sm tracking-widest mt-1">بـوابـة حـجـوزات الـمـرضـى</p>
+        // --- كارت بيانات الفرع: الخريطة على جنب والتفاصيل على الجنب التاني ---
+        function BranchInfo({ b, estimate }) {
+            const rows = [
+                b.address && [I.pin(), T('العنوان', 'Address'), b.address],
+                b.hours && [I.clock(), T('مواعيد العمل', 'Working hours'), b.hours],
+                b.waitTime && [I.wait(), T('مدة الانتظار المتوقعة', 'Expected waiting time'), b.waitTime],
+                [I.money(), T('التكلفة المتوقعة', 'Expected cost'), estimate || (b.consultFee ? T('الكشف: ', 'Consultation: ') + b.consultFee : T('بتتحدد بعد الكشف', 'Determined after examination'))],
+                b.phone && [I.phone(), T('تليفون الفرع', 'Branch phone'), <a href={'tel:' + b.phone} dir="ltr" className="underline">{b.phone}</a>]
+            ].filter(Boolean);
+            return (
+                <div className="grid md:grid-cols-2 gap-4 animate-fade-in">
+                    <div className="rounded-2xl overflow-hidden border border-gray-100 bg-gray-100 min-h-[220px] md:min-h-[260px] relative">
+                        <iframe title="map" src={mapSrc(b)} className="absolute inset-0 w-full h-full border-0" loading="lazy" referrerPolicy="no-referrer-when-downgrade" allowFullScreen></iframe>
+                    </div>
+                    <div className="bg-gray-50 rounded-2xl p-4 border border-gray-100 space-y-3">
+                        <p className="font-black text-gray-900">{T('فرع ', '')}{b.name}</p>
+                        {rows.map(([ic, l, v], i) => <div key={i} className="flex gap-2.5"><span className="text-gold-600 mt-0.5 shrink-0">{ic}</span><div className="min-w-0"><p className="text-[11px] font-bold text-gray-400">{l}</p><div className="text-sm font-bold text-gray-800 break-words">{v}</div></div></div>)}
+                        {b.mapsLink && <a href={b.mapsLink} target="_blank" rel="noreferrer" className="inline-block text-xs font-black text-blue-600">{T('افتح على جوجل مابس ↗', 'Open in Google Maps ↗')}</a>}
+                    </div>
                 </div>
             );
+        }
+
+        // --- اختيار الفرع ---
+        function BranchPicker({ branches, value, onChange }) {
+            return <div className="flex flex-wrap gap-2">{branches.map(b => <button key={b.id} type="button" onClick={() => onChange(b.id)} className={`px-4 py-2.5 rounded-xl text-sm font-black border-2 transition-all ${value === b.id ? 'bg-gold-500 text-white border-gold-500 shadow-md' : 'bg-white text-gray-700 border-gray-200 hover:border-gold-400'}`}>{b.name}</button>)}</div>;
+        }
+
+        const Label = ({ n, children }) => <p className="text-sm font-black text-gray-800 mb-2 flex items-center gap-2">{n && <span className="w-6 h-6 rounded-full bg-gold-500 text-white text-xs flex items-center justify-center shrink-0">{n}</span>}{children}</p>;
+        const inp = "w-full bg-gray-50 border border-gray-200 p-3.5 rounded-2xl outline-none focus:border-gold-500 font-bold transition-colors";
+
+        // ===================== حجز موعد =====================
+        function BookForm({ pub, initial, onDone, alert }) {
+            const editing = !!(initial && initial.id);
+            const [f, setF] = useState(() => ({ name: '', phone: '', branchId: '', serviceIds: [], doctorId: '', date: '', time: '', ...(initial ? { name: initial.patientName, phone: initial.phone, branchId: initial.branchId, serviceIds: initial.serviceIds || [], doctorId: initial.doctorId || '', date: initial.date, time: initial.time } : {}) }));
+            const [daySlots, setDaySlots] = useState([]);
+            const [busy, setBusy] = useState(false);
+            const presetDone = useRef(false);
+            // حجز قديم من غير serviceIds: نطابق الخدمات بالاسم
+            useEffect(() => {
+                if (!editing || (initial.serviceIds || []).length || !initial.service || !pub.services.length || f.serviceIds.length) return;
+                const names = initial.service.split(/[،,]/).map(x => x.trim());
+                const ids = pub.services.filter(x => names.includes(x.name)).map(x => x.id);
+                if (ids.length) set({ serviceIds: ids });
+            }, [pub.services]);
+            const set = p => setF(x => ({ ...x, ...p }));
+            // خدمة جاية من صفحة خدمة في الموقع
+            useEffect(() => {
+                const want = (QS.get('service') || '').trim();
+                if (presetDone.current || !want || !pub.services.length || editing) return;
+                presetDone.current = true;
+                const s = pub.services.find(x => x.name === want) || pub.services.find(x => want.includes(x.name) || x.name.includes(want));
+                if (s) set({ serviceIds: [s.id] });
+            }, [pub.services]);
+            useEffect(() => {
+                if (!f.date) { setDaySlots([]); return; }
+                return db.collection('booked_slots').where('date', '==', f.date).onSnapshot(s => setDaySlots(s.docs.map(d => d.data())), e => console.error(e));
+            }, [f.date]);
+            const branch = pub.branches.find(b => b.id === f.branchId);
+            const chosen = pub.services.filter(s => f.serviceIds.includes(s.id));
+            const specIds = [...new Set(chosen.map(s => s.specialtyId).filter(Boolean))];
+            const branchDocs = pub.doctors.filter(d => Array.isArray(d.branchIds) && d.branchIds.includes(f.branchId));
+            const scored = branchDocs.map(d => ({ d, n: specIds.filter(id => (d.specs || []).includes(id)).length })).sort((a, b) => b.n - a.n || (a.d.name || '').localeCompare(b.d.name || '', 'ar'));
+            const matched = specIds.length ? scored.filter(x => x.n > 0) : scored;
+            const suggest = matched.length ? matched : scored;
+            const specName = id => (pub.specialties.find(s => s.id === id) || {}).name;
+            const doc = pub.doctors.find(d => d.id === f.doctorId);
+            const off = !!(f.doctorId && f.date && !doctorWorks(doc, f.branchId, f.date));
+            const own = editing && initial.branchId === f.branchId && (initial.doctorId || '') === f.doctorId && initial.date === f.date ? initial.time : null;
+            const booked = new Set(daySlots.filter(x => x.branchId === f.branchId && (x.doctorId || '') === f.doctorId && x.time !== own).map(x => x.time));
+            const today = localDay(), now = new Date();
+            const slots = (!f.doctorId || !f.date || off) ? [] : SLOTS.filter(v => { if (booked.has(v)) return false; if (f.date === today) { const [h, m] = v.split(':').map(Number); if (h * 60 + m <= now.getHours() * 60 + now.getMinutes() && v !== own) return false; } return true; });
+            const lo = chosen.reduce((t, s) => t + num(s.priceFrom), 0), hi = chosen.reduce((t, s) => t + (num(s.priceTo) || num(s.priceFrom)), 0);
+            const estimate = chosen.length ? (lo || hi ? (hi > lo ? num(lo).toLocaleString('en-US') + ' – ' + money(hi) : money(lo)) : T('حسب الحالة', 'Varies')) : '';
+            const toggleSvc = id => set({ serviceIds: f.serviceIds.includes(id) ? f.serviceIds.filter(x => x !== id) : [...f.serviceIds, id], doctorId: '', time: '' });
+            useEffect(() => { if (f.time && !slots.includes(f.time)) set({ time: '' }); }, [daySlots, f.doctorId, f.date, off]);
+
+            const submit = async e => {
+                e.preventDefault();
+                if (!f.branchId) return alert('error', T('اختار الفرع', 'Choose a branch'));
+                if (!f.doctorId) return alert('error', T('اختار الدكتور', 'Choose a doctor'));
+                if (off) return alert('error', T('الدكتور مش متاح في اليوم ده', 'Doctor not available that day'));
+                if (!f.time) return alert('error', T('اختار الوقت', 'Choose a time'));
+                setBusy(true);
+                const base = { patientName: f.name.trim(), phone: f.phone.trim(), branchId: f.branchId, doctorId: f.doctorId, doctorName: (doc && doc.name) || '', service: (chosen.map(s => s.name).join('، ') || T('كشف', 'Checkup')).slice(0, 200), serviceIds: f.serviceIds.slice(0, 20), estimate: (estimate || (branch && branch.consultFee ? T('الكشف: ', 'Consultation: ') + branch.consultFee : '')).slice(0, 80), date: f.date, time: f.time };
+                const sid = slotId(base.branchId, base.doctorId, base.date, base.time);
+                try {
+                    if (editing) {
+                        const oldSid = slotId(initial.branchId, initial.doctorId, initial.date, initial.time);
+                        const appRef = db.collection('appointments').doc(initial.id);
+                        const ch = (base.date !== initial.date || base.time !== initial.time || base.doctorId !== (initial.doctorId || '')) ? { rescheduledAt: new Date().toISOString(), rescheduledBy: 'patient', prevDate: initial.date || '', prevTime: initial.time || '', prevDoctorId: initial.doctorId || '', prevDoctorName: initial.doctorName || '' } : {};
+                        await db.runTransaction(async tx => {
+                            const cur = await tx.get(appRef); if (!cur.exists) throw new Error('GONE');
+                            if (sid !== oldSid) { const sRef = db.collection('booked_slots').doc(sid); if ((await tx.get(sRef)).exists) throw new Error('SLOT_TAKEN'); tx.set(sRef, { branchId: base.branchId, doctorId: base.doctorId, date: base.date, time: base.time, at: Date.now(), appId: initial.id }); }
+                            tx.update(appRef, { ...base, ...ch });
+                        });
+                        onDone({ ...initial, ...base, branch });
+                    } else {
+                        const sRef = db.collection('booked_slots').doc(sid);
+                        let res = null;
+                        for (let i = 0; i < 5 && !res; i++) {
+                            const code = newCode(), appRef = db.collection('appointments').doc(), bRef = db.collection('online_bookings').doc(code);
+                            try {
+                                await db.runTransaction(async tx => {
+                                    const [bs, ss] = await Promise.all([tx.get(bRef), tx.get(sRef)]);
+                                    if (ss.exists) throw new Error('SLOT_TAKEN'); if (bs.exists) throw new Error('CODE_TAKEN');
+                                    tx.set(appRef, { ...base, bookingCode: code, source: 'online', status: 'unconfirmed', createdAt: new Date().toISOString() });
+                                    tx.set(bRef, { appointmentId: appRef.id });
+                                    tx.set(sRef, { branchId: base.branchId, doctorId: base.doctorId, date: base.date, time: base.time, at: Date.now(), appId: appRef.id });
+                                });
+                                res = { id: appRef.id, ...base, bookingCode: code };
+                            } catch (err) { if (err.message !== 'CODE_TAKEN') throw err; }
+                        }
+                        if (!res) throw new Error('CODE_TAKEN');
+                        onDone({ ...res, branch });
+                    }
+                } catch (err) {
+                    console.error(err);
+                    if (err.message === 'SLOT_TAKEN') { set({ time: '' }); alert('error', T('الموعد ده اتحجز حالاً، اختار وقت تاني', 'This slot was just booked, pick another')); }
+                    else if (err.message === 'GONE') alert('error', T('الحجز ده مبقاش موجود', 'This booking no longer exists'));
+                    else alert('error', T('حصل خطأ، اتأكد من النت وجرب تاني', 'Something went wrong, check your connection'));
+                }
+                setBusy(false);
+            };
 
             return (
-                <div className="min-h-screen relative">
-                    {/* --- نافذة التنبيهات الذكية --- */}
-                    {customAlert && (
-                        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-[999] flex items-center justify-center p-4 animate-fade-in">
-                            <div className="bg-white w-full max-w-sm rounded-[30px] shadow-2xl p-6 text-center animate-scale-in">
-                                <div className={`w-16 h-16 rounded-full mx-auto flex items-center justify-center mb-4 ${customAlert.type === 'error' ? 'bg-red-50 text-red-500' : 'bg-emerald-50 text-emerald-500'}`}>
-                                    {customAlert.type === 'error' ? <IconX size={32}/> : <IconCheck size={32}/>}
-                                </div>
-                                <h3 className="text-xl font-black text-gray-800 mb-2">{customAlert.title}</h3>
-                                <p className="text-gray-500 font-bold mb-6 text-sm">{customAlert.msg}</p>
-                                <button onClick={() => setCustomAlert(null)} className={`w-full py-3 rounded-2xl font-black text-white transition-transform hover:scale-105 ${customAlert.type === 'error' ? 'bg-red-500' : 'bg-emerald-500'}`}>حسناً، فهمت</button>
-                            </div>
-                        </div>
-                    )}
+                <form onSubmit={submit} className="space-y-6">
+                    <div><Label n="1">{T('اختار الفرع', 'Choose a branch')}</Label><BranchPicker branches={pub.branches} value={f.branchId} onChange={id => set({ branchId: id, doctorId: '', time: '' })} /></div>
+                    {branch && <BranchInfo b={branch} estimate={estimate ? estimate + T(' (تقريبي)', ' (approx.)') : ''} />}
 
-                    {/* --- نافذة تأكيد الإلغاء الذكية --- */}
-                    {confirmAction && (
-                        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-[999] flex items-center justify-center p-4 animate-fade-in">
-                            <div className="bg-white w-full max-w-sm rounded-[30px] shadow-2xl p-6 text-center animate-scale-in">
-                                <div className="w-16 h-16 rounded-full bg-red-50 text-red-500 mx-auto flex items-center justify-center mb-4">
-                                    <IconTrash />
-                                </div>
-                                <h3 className="text-xl font-black text-gray-800 mb-2">تأكيد الإلغاء</h3>
-                                <p className="text-gray-500 font-bold mb-6 text-sm">{confirmAction.msg}</p>
-                                <div className="flex gap-3">
-                                    <button onClick={confirmAction.onConfirm} className="flex-1 py-3 bg-red-500 text-white rounded-2xl font-black hover:bg-red-600 transition-colors">نعم، إلغاء</button>
-                                    <button onClick={() => setConfirmAction(null)} className="flex-1 py-3 bg-gray-100 text-gray-700 rounded-2xl font-black hover:bg-gray-200 transition-colors">تراجع</button>
-                                </div>
-                            </div>
-                        </div>
-                    )}
+                    {branch && pub.services.length > 0 && <div className="animate-fade-in">
+                        <Label n="2">{T('محتاج إيه؟ (اختياري — تقدر تختار أكتر من خدمة)', 'What do you need? (optional — pick one or more)')}</Label>
+                        <div className="space-y-3">{[...pub.specialties, { id: '', name: T('خدمات تانية', 'Other services') }].map(sp => { const list = pub.services.filter(s => (s.specialtyId || '') === sp.id || (sp.id === '' && !pub.specialties.some(x => x.id === s.specialtyId))); if (!list.length) return null; return (
+                            <div key={sp.id || 'o'}><p className="text-[11px] font-black text-gray-400 mb-1.5">{sp.name}</p>
+                                <div className="flex flex-wrap gap-2">{list.map(s => { const on = f.serviceIds.includes(s.id); return (
+                                    <button key={s.id} type="button" onClick={() => toggleSvc(s.id)} title={s.note || ''} className={`text-right px-3 py-2 rounded-xl border-2 transition-all ${on ? 'bg-gold-50 border-gold-500' : 'bg-white border-gray-200 hover:border-gold-300'}`}>
+                                        <span className="block text-xs font-black text-gray-800">{on ? '✓ ' : ''}{s.name}</span>
+                                        <span className="block text-[10px] font-bold text-gold-700">{priceText(s)}{s.duration ? ' • ' + s.duration : ''}</span>
+                                    </button>); })}</div></div>); })}</div>
+                        {estimate && <div className="mt-3 bg-gold-50 border border-gold-200 rounded-2xl p-3 flex items-center justify-between gap-2"><span className="text-sm font-black text-gray-800">{T('التكلفة المتوقعة', 'Expected cost')}</span><span className="text-base font-black text-gold-700">{estimate}</span></div>}
+                        {estimate && <p className="text-[10px] font-bold text-gray-400 mt-1">{T('السعر تقريبي وبيتحدد نهائياً بعد الكشف.', 'Approximate — final price is set after examination.')}</p>}
+                    </div>}
 
-                    {/* --- واجهة الحجز الرئيسية --- */}
-                    {view === 'home' && (
-                        <div className="pb-12 px-4 flex flex-col items-center">
-                            {renderHeader()}
-                            <div className="w-full max-w-xl bg-white rounded-[40px] shadow-[0_15px_50px_rgb(0,0,0,0.06)] border border-gray-100 p-8 animate-slide-up">
-                                <h2 className="text-xl font-black text-gray-800 mb-6 flex items-center gap-2 border-b border-gray-100 pb-4"><IconCalendar/> سجل موعدك الآن</h2>
-                                <form onSubmit={submitBooking} className="space-y-5">
-                                    <div className="space-y-1">
-                                        <label className="text-xs font-bold text-gray-500">الاسم الثلاثي *</label>
-                                        <input required name="patientName" value={formData.patientName} onChange={handleInputChange} className="w-full bg-gray-50 border border-gray-200 p-4 rounded-2xl outline-none focus:border-gold-500 font-bold transition-colors" placeholder="ادخل اسمك بالكامل" />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-xs font-bold text-gray-500">رقم الموبايل للتواصل *</label>
-                                        <input required type="tel" name="phone" value={formData.phone} onChange={handleInputChange} className="w-full bg-gray-50 border border-gray-200 p-4 rounded-2xl outline-none focus:border-gold-500 font-bold text-left transition-colors" placeholder="01xxxxxxxxx" dir="ltr" />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-xs font-bold text-gray-500">نوع الخدمة المطلوبة</label>
-                                        <input name="service" value={formData.service} onChange={handleInputChange} className="w-full bg-gray-50 border border-gray-200 p-4 rounded-2xl outline-none focus:border-gold-500 font-bold transition-colors" placeholder="مثال: كشف، حشو، تبييض..." />
-                                    </div>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                        <div className="space-y-1">
-                                            <label className="text-xs font-bold text-gray-500">الفرع *</label>
-                                            <select required name="branchId" value={formData.branchId} onChange={handleInputChange} className="w-full bg-gray-50 border border-gray-200 p-4 rounded-2xl outline-none focus:border-gold-500 font-bold text-gray-800">
-                                                <option value="">اختر الفرع...</option>
-                                                {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                                            </select>
-                                        </div>
-                                        <div className="space-y-1">
-                                            <label className="text-xs font-bold text-gray-500">تاريخ الزيارة *</label>
-                                            <input required type="date" name="date" value={formData.date} onChange={handleInputChange} min={new Date().toISOString().split('T')[0]} className="w-full bg-gray-50 border border-gray-200 p-4 rounded-2xl outline-none focus:border-gold-500 font-bold text-gray-800" />
-                                        </div>
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-xs font-bold text-gray-500">الدكتور *</label>
-                                        <select required name="doctorId" value={formData.doctorId} onChange={handleInputChange} disabled={!formData.branchId} className="w-full bg-gray-50 border border-gray-200 p-4 rounded-2xl outline-none focus:border-gold-500 font-bold text-gray-800 disabled:opacity-50">
-                                            <option value="">{formData.branchId ? 'اختر الدكتور...' : 'اختر الفرع أولاً'}</option>
-                                            {branchDoctors.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                                        </select>
-                                    </div>
-                                    {formData.date && formData.branchId && formData.doctorId && (
-                                        <div className="pt-4 border-t border-gray-100 animate-fade-in">
-                                            <label className="text-xs font-bold text-gray-500 mb-3 block">اختر الوقت المناسب (المتاح فقط) *</label>
-                                            {availableSlots.length > 0 ? (
-                                                <div className="grid grid-cols-3 md:grid-cols-4 gap-3" dir="ltr">
-                                                    {availableSlots.map(slot => (
-                                                        <button 
-                                                            key={slot.value} type="button" onClick={() => setFormData({...formData, time: slot.value})}
-                                                            className={`flex items-center justify-center w-full py-3 rounded-xl text-xs font-bold transition-all text-center border-2 ${
-                                                                formData.time === slot.value 
-                                                                ? 'bg-gold-500 text-white border-gold-500 shadow-[0_4px_14px_rgba(245,158,11,0.4)]' 
-                                                                : 'bg-white text-gray-600 border-gray-100 hover:border-gold-300'
-                                                            }`}
-                                                        >{slot.label}</button>
-                                                    ))}
-                                                </div>
-                                            ) : (
-                                                <p className="text-sm font-bold text-red-500 bg-red-50 p-4 rounded-xl text-center">{doctorOff ? 'الدكتور غير متاح في اليوم ده — اختار يوم تاني أو دكتور تاني.' : 'عفواً، لا توجد مواعيد متاحة في هذا اليوم.'}</p>
-                                            )}
-                                        </div>
-                                    )}
-                                    <button disabled={isLoading} type="submit" className="w-full mt-6 bg-gradient-to-r from-gold-600 to-gold-400 text-white font-black py-5 rounded-2xl shadow-lg shadow-gold-500/30 hover:scale-[1.02] transition-transform text-lg flex justify-center items-center">
-                                        {isLoading ? 'جاري التأكيد...' : 'تأكيد الحجز الآن'}
-                                    </button>
-                                </form>
-                            </div>
+                    {branch && <div className="animate-fade-in">
+                        <Label n={pub.services.length ? '3' : '2'}>{T('اختار الدكتور', 'Choose your doctor')}</Label>
+                        {specIds.length > 0 && !matched.length && <p className="text-xs font-bold text-amber-700 bg-amber-50 rounded-xl p-2.5 mb-2">{T('مفيش دكتور متحدد للخدمة دي في الفرع ده — تقدر تختار من دكاترة الفرع.', 'No doctor is set for this service here — choose any doctor in this branch.')}</p>}
+                        {suggest.length === 0 ? <p className="text-sm font-bold text-gray-500">{T('مفيش دكاترة متاحين في الفرع ده حالياً.', 'No doctors available in this branch right now.')}</p> :
+                        <div className="grid sm:grid-cols-2 gap-2">{suggest.map(({ d, n }) => { const on = f.doctorId === d.id; return (
+                            <button key={d.id} type="button" onClick={() => set({ doctorId: d.id, time: '' })} className={`text-right p-3 rounded-2xl border-2 transition-all ${on ? 'bg-gold-50 border-gold-500' : 'bg-white border-gray-200 hover:border-gold-300'}`}>
+                                <span className="flex items-center gap-2"><span className="w-9 h-9 rounded-full bg-gold-100 text-gold-700 font-black flex items-center justify-center shrink-0">{(d.name || '?').trim().charAt(0)}</span>
+                                    <span className="min-w-0"><span className="block text-sm font-black text-gray-800 truncate">{T('د. ', 'Dr. ')}{d.name}</span>
+                                        <span className="block text-[10px] font-bold text-gray-400 truncate">{(d.specs || []).map(specName).filter(Boolean).join('، ') || T('طب أسنان عام', 'General dentistry')}</span></span>
+                                    {specIds.length > 0 && n > 0 && <span className="mr-auto text-[9px] font-black text-emerald-700 bg-emerald-50 rounded-md px-1.5 py-0.5 shrink-0">{T('مناسب للخدمة', 'Fits')}</span>}</span>
+                            </button>); })}</div>}
+                    </div>}
 
-                            <div className="mt-8 text-center animate-fade-in w-full max-w-sm">
-                                <p className="text-sm text-gray-500 font-bold mb-4">هل قمت بالحجز مسبقاً؟</p>
-                                <form onSubmit={searchBooking} className="flex">
-                                    <input required value={searchCode} onChange={e=>setSearchCode(e.target.value)} placeholder="أدخل كود الحجز هنا" className="bg-white border-y border-r border-gray-200 p-4 rounded-r-2xl outline-none focus:border-gold-500 font-mono tracking-widest font-bold w-full uppercase text-center" />
-                                    <button disabled={isLoading} type="submit" className="bg-gray-800 text-white px-6 font-bold rounded-l-2xl hover:bg-black transition-colors">بحث</button>
-                                </form>
-                                {searchError && <p className="text-red-500 text-xs font-bold mt-3">{searchError}</p>}
-                            </div>
-                        </div>
-                    )}
+                    {f.doctorId && <div className="animate-fade-in">
+                        <Label n={pub.services.length ? '4' : '3'}>{T('اليوم والوقت', 'Date & time')}</Label>
+                        <input type="date" required value={f.date} min={today} onChange={e => set({ date: e.target.value, time: '' })} className={inp + ' mb-3'} />
+                        {f.date && (off ? <p className="text-sm font-bold text-red-600 bg-red-50 p-3 rounded-xl text-center">{T('الدكتور غير متاح في اليوم ده — اختار يوم تاني أو دكتور تاني.', 'The doctor is not available on this day — pick another day or doctor.')}</p>
+                            : slots.length ? <div className="grid grid-cols-3 sm:grid-cols-5 gap-2" dir="ltr">{slots.map(v => <button key={v} type="button" onClick={() => set({ time: v })} className={`py-2.5 rounded-xl text-xs font-black border-2 transition-all ${f.time === v ? 'bg-gold-500 text-white border-gold-500 shadow' : 'bg-white text-gray-600 border-gray-100 hover:border-gold-300'}`}>{fmtTime(v)}</button>)}</div>
+                            : <p className="text-sm font-bold text-red-500 bg-red-50 p-3 rounded-xl text-center">{T('مفيش مواعيد متاحة في اليوم ده.', 'No available times on this day.')}</p>)}
+                    </div>}
 
-                    {/* --- واجهة النجاح وتأكيد الموعد --- */}
-                    {view === 'success' && (
-                        <div className="pb-12 pt-8 px-4 flex flex-col items-center">
-                            <div className="w-full max-w-md bg-white rounded-[40px] shadow-2xl p-8 text-center animate-slide-up relative overflow-hidden">
-                                <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-gold-400 to-gold-600"></div>
-                                <div className="flex justify-center mb-6"><IconCheck size={56} className="text-emerald-500" /></div>
-                                <h2 className="text-3xl font-black text-gray-800 mb-2">تم الحجز بنجاح!</h2>
-                                <p className="text-sm text-gray-500 font-bold mb-8">ننتظر تشريفك لنا في الموعد المحدد.</p>
-                                
-                                <div className="bg-gray-50 rounded-3xl p-6 text-right mb-8 border border-gray-100">
-                                    <p className="text-xs text-gray-400 font-bold mb-1">اسم المريض</p>
-                                    <p className="font-black text-lg text-gray-800 mb-4">{bookingResult.patientName}</p>
-                                    <div className="grid grid-cols-2 gap-4 mb-4">
-                                        <div className="bg-white p-3 rounded-xl shadow-sm border border-gray-100">
-                                            <p className="text-[10px] text-gray-400 font-bold flex items-center gap-1 mb-1"><IconCalendar/> التاريخ</p>
-                                            <p className="font-bold text-gray-800">{bookingResult.date}</p>
-                                        </div>
-                                        <div className="bg-white p-3 rounded-xl shadow-sm border border-gray-100">
-                                            <p className="text-[10px] text-gray-400 font-bold flex items-center gap-1 mb-1"><IconClock/> الوقت</p>
-                                            <p className="font-bold text-gray-800" dir="ltr">{bookingResult.time}</p>
-                                        </div>
-                                    </div>
-                                    {bookingResult.doctorName && (<><p className="text-[10px] text-gray-400 font-bold mb-1">الدكتور</p><p className="font-bold text-gray-800 mb-4">{bookingResult.doctorName}</p></>)}
-                                    <p className="text-[10px] text-gray-400 font-bold mb-1">الفرع المختار</p>
-                                    <p className="font-bold text-gold-600 mb-4">{bookingResult.branchName}</p>
-                                    {bookingResult.branchPhone && (
-                                        <div className="flex items-center gap-2 text-sm font-bold text-gray-600 bg-white p-3 rounded-xl">
-                                            <IconPhone/> للتواصل: <span dir="ltr">{bookingResult.branchPhone}</span>
-                                        </div>
-                                    )}
-                                </div>
+                    {f.time && <div className="animate-fade-in space-y-3">
+                        <Label n={pub.services.length ? '5' : '4'}>{T('بياناتك', 'Your details')}</Label>
+                        <input required maxLength={100} value={f.name} onChange={e => set({ name: e.target.value })} placeholder={T('الاسم بالكامل', 'Full name')} className={inp} />
+                        <input required type="tel" maxLength={30} value={f.phone} onChange={e => set({ phone: e.target.value })} placeholder="01xxxxxxxxx" dir="ltr" className={inp + ' text-left'} />
+                        <button disabled={busy} className="w-full bg-gradient-to-r from-gold-600 to-gold-400 text-white font-black py-4 rounded-2xl shadow-lg text-lg disabled:opacity-60">{busy ? '...' : editing ? T('حفظ التعديل', 'Save changes') : T('تأكيد الحجز', 'Confirm booking')}</button>
+                    </div>}
+                </form>
+            );
+        }
 
-                                <div className="bg-gold-50 border-2 border-gold-200 rounded-3xl p-6 mb-8 border-dashed">
-                                    <p className="text-xs text-gold-700 font-bold mb-2">كود الحجز السري الخاص بك</p>
-                                    <p className="text-4xl font-black font-mono tracking-[0.3em] text-gold-600">{bookingResult.bookingCode}</p>
-                                    <p className="text-[10px] text-gray-500 font-bold mt-3">احتفظ بهذا الكود، ستحتاجه إذا أردت تعديل أو إلغاء الموعد لاحقاً.</p>
-                                </div>
+        // ===================== استشارة أونلاين =====================
+        function ConsultForm({ pub, onDone, alert }) {
+            const [f, setF] = useState({ name: '', phone: '', branchId: '', specId: '', doctorId: '', question: '' });
+            const [busy, setBusy] = useState(false);
+            const set = p => setF(x => ({ ...x, ...p }));
+            const docs = pub.doctors.filter(d => (!f.branchId || (d.branchIds || []).includes(f.branchId)) && (!f.specId || (d.specs || []).includes(f.specId)));
+            const spec = pub.specialties.find(s => s.id === f.specId);
+            const submit = async e => {
+                e.preventDefault();
+                if (!f.question.trim()) return alert('error', T('اكتب سؤالك', 'Write your question'));
+                setBusy(true);
+                const d = pub.doctors.find(x => x.id === f.doctorId);
+                const targets = d ? [d.id] : docs.slice(0, 30).map(x => x.id);
+                const data = { name: f.name.trim(), phone: f.phone.trim(), branchId: f.branchId, topic: spec ? spec.name : T('عام', 'General'), doctorId: d ? d.id : '', doctorName: d ? d.name : '', targets, question: f.question.trim(), status: 'new', createdAt: new Date().toISOString() };
+                try {
+                    let code = null;
+                    for (let i = 0; i < 5 && !code; i++) {
+                        const c = newCode(8), ref = db.collection('consults').doc(c);
+                        try { await db.runTransaction(async tx => { if ((await tx.get(ref)).exists) throw new Error('TAKEN'); tx.set(ref, data); }); code = c; }
+                        catch (err) { if (err.message !== 'TAKEN') throw err; }
+                    }
+                    if (!code) throw new Error('TAKEN');
+                    onDone({ code, ...data });
+                } catch (err) { console.error(err); alert('error', T('حصل خطأ، اتأكد من النت وجرب تاني', 'Something went wrong, check your connection')); }
+                setBusy(false);
+            };
+            return (
+                <form onSubmit={submit} className="space-y-6">
+                    <p className="text-sm font-bold text-gray-500 leading-relaxed">{T('ابعت سؤالك لدكاترتنا مجاناً، والدكتور هيرد عليك في أقرب وقت. تقدر تتابع الرد بالكود اللي هيظهرلك.', 'Send your question to our doctors for free. Track the reply with the code you will get.')}</p>
+                    <div><Label n="1">{T('الموضوع', 'Topic')}</Label>
+                        <div className="flex flex-wrap gap-2">{[{ id: '', name: T('عام / مش متأكد', 'General / not sure') }, ...pub.specialties].map(s => <button key={s.id || 'g'} type="button" onClick={() => set({ specId: s.id, doctorId: '' })} className={`px-3.5 py-2 rounded-xl text-xs font-black border-2 ${f.specId === s.id ? 'bg-gold-500 text-white border-gold-500' : 'bg-white text-gray-700 border-gray-200'}`}>{s.name}</button>)}</div></div>
+                    {pub.branches.length > 1 && <div><Label n="2">{T('الفرع الأقرب ليك (اختياري)', 'Nearest branch (optional)')}</Label>
+                        <div className="flex flex-wrap gap-2"><button type="button" onClick={() => set({ branchId: '', doctorId: '' })} className={`px-4 py-2.5 rounded-xl text-sm font-black border-2 ${!f.branchId ? 'bg-gold-500 text-white border-gold-500' : 'bg-white text-gray-700 border-gray-200'}`}>{T('أي فرع', 'Any')}</button>
+                            {pub.branches.map(b => <button key={b.id} type="button" onClick={() => set({ branchId: b.id, doctorId: '' })} className={`px-4 py-2.5 rounded-xl text-sm font-black border-2 ${f.branchId === b.id ? 'bg-gold-500 text-white border-gold-500' : 'bg-white text-gray-700 border-gray-200'}`}>{b.name}</button>)}</div></div>}
+                    <div><Label n={pub.branches.length > 1 ? '3' : '2'}>{T('عايز تسأل دكتور معين؟', 'Ask a specific doctor?')}</Label>
+                        <div className="grid sm:grid-cols-2 gap-2">
+                            <button type="button" onClick={() => set({ doctorId: '' })} className={`text-right p-3 rounded-2xl border-2 text-sm font-black ${!f.doctorId ? 'bg-gold-50 border-gold-500' : 'bg-white border-gray-200'}`}>{T('أي دكتور مناسب', 'Any suitable doctor')}{docs.length ? <span className="block text-[10px] font-bold text-gray-400">{T('هيوصل لـ ', 'Goes to ')}{docs.length}{T(' دكتور', ' doctors')}</span> : null}</button>
+                            {docs.map(d => <button key={d.id} type="button" onClick={() => set({ doctorId: d.id })} className={`text-right p-3 rounded-2xl border-2 text-sm font-black ${f.doctorId === d.id ? 'bg-gold-50 border-gold-500' : 'bg-white border-gray-200'}`}>{T('د. ', 'Dr. ')}{d.name}</button>)}
+                        </div></div>
+                    <div className="space-y-3"><Label n={pub.branches.length > 1 ? '4' : '3'}>{T('سؤالك', 'Your question')}</Label>
+                        <textarea required rows="5" maxLength={2000} value={f.question} onChange={e => set({ question: e.target.value })} placeholder={T('اشرح المشكلة: فين بالظبط، من إمتى، فيه ألم ولا لأ...', 'Describe the issue: where, since when, any pain...')} className={inp} />
+                        <input required maxLength={100} value={f.name} onChange={e => set({ name: e.target.value })} placeholder={T('الاسم', 'Name')} className={inp} />
+                        <input required type="tel" maxLength={30} value={f.phone} onChange={e => set({ phone: e.target.value })} placeholder={T('رقم الموبايل (واتساب)', 'Mobile (WhatsApp)')} dir="ltr" className={inp + ' text-left'} />
+                        <button disabled={busy} className="w-full bg-gradient-to-r from-gold-600 to-gold-400 text-white font-black py-4 rounded-2xl shadow-lg text-lg disabled:opacity-60">{busy ? '...' : T('ابعت الاستشارة', 'Send question')}</button>
+                    </div>
+                </form>
+            );
+        }
 
-                                <button onClick={() => {setView('home'); setFormData({patientName:'',phone:'',branchId:'',doctorId:'',service:'',date:'',time:''});}} className="w-full bg-gray-800 text-white font-bold py-4 rounded-2xl hover:bg-black transition-colors">العودة للرئيسية</button>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* --- واجهة إدارة الحجز (التعديل/الإلغاء) --- */}
-                    {view === 'manage' && (
-                        <div className="pb-12 px-4 flex flex-col items-center">
-                            {renderHeader()}
-                            <div className="w-full max-w-xl bg-white rounded-[40px] shadow-xl border border-gray-100 p-8 animate-slide-up">
-                                <div className="flex justify-between items-center mb-6 border-b border-gray-100 pb-4">
-                                    <h2 className="text-xl font-black text-gray-800">إدارة موعدك</h2>
-                                    <span className="bg-gold-100 text-gold-700 px-3 py-1 rounded-lg font-mono font-bold">{bookingResult.bookingCode}</span>
-                                </div>
-                                <form onSubmit={updateBooking} className="space-y-5">
-                                    <div className="space-y-1">
-                                        <label className="text-xs font-bold text-gray-500">الاسم</label>
-                                        <input required name="patientName" value={formData.patientName} onChange={handleInputChange} className="w-full bg-gray-50 border border-gray-200 p-4 rounded-2xl outline-none focus:border-gold-500 font-bold" />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-xs font-bold text-gray-500">رقم الموبايل</label>
-                                        <input required type="tel" name="phone" value={formData.phone} onChange={handleInputChange} className="w-full bg-gray-50 border border-gray-200 p-4 rounded-2xl outline-none focus:border-gold-500 font-bold text-left" dir="ltr" />
-                                    </div>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                        <div className="space-y-1">
-                                            <label className="text-xs font-bold text-gray-500">الفرع</label>
-                                            <select required name="branchId" value={formData.branchId} onChange={handleInputChange} className="w-full bg-gray-50 border border-gray-200 p-4 rounded-2xl outline-none focus:border-gold-500 font-bold text-gray-800">
-                                                {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                                            </select>
-                                        </div>
-                                        <div className="space-y-1">
-                                            <label className="text-xs font-bold text-gray-500">تاريخ الزيارة</label>
-                                            <input required type="date" name="date" value={formData.date} onChange={handleInputChange} min={new Date().toISOString().split('T')[0]} className="w-full bg-gray-50 border border-gray-200 p-4 rounded-2xl outline-none focus:border-gold-500 font-bold text-gray-800" />
-                                        </div>
-                                    </div>
-                                    <div className="space-y-1">
-                                        <label className="text-xs font-bold text-gray-500">الدكتور</label>
-                                        <select required name="doctorId" value={formData.doctorId} onChange={handleInputChange} disabled={!formData.branchId} className="w-full bg-gray-50 border border-gray-200 p-4 rounded-2xl outline-none focus:border-gold-500 font-bold text-gray-800 disabled:opacity-50">
-                                            <option value="">{formData.branchId ? 'اختر الدكتور...' : 'اختر الفرع أولاً'}</option>
-                                            {branchDoctors.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                                        </select>
-                                    </div>
-                                    {formData.date && formData.branchId && formData.doctorId && (
-                                        <div className="pt-4 border-t border-gray-100">
-                                            <label className="text-xs font-bold text-gray-500 mb-3 block">اختر الوقت الجديد</label>
-                                            {doctorOff && <p className="text-sm font-bold text-red-500 bg-red-50 p-4 rounded-xl text-center">الدكتور غير متاح في اليوم ده — اختار يوم تاني أو دكتور تاني.</p>}
-                                            <div className="grid grid-cols-3 md:grid-cols-4 gap-3" dir="ltr">
-                                                {availableSlots.map(slot => (
-                                                    <button 
-                                                        key={slot.value} type="button" onClick={() => setFormData({...formData, time: slot.value})}
-                                                        className={`flex items-center justify-center w-full py-3 rounded-xl text-xs font-bold transition-all text-center border-2 ${
-                                                            formData.time === slot.value 
-                                                            ? 'bg-gold-500 text-white border-gold-500 shadow-[0_4px_14px_rgba(245,158,11,0.4)]' 
-                                                            : 'bg-white text-gray-600 border-gray-100 hover:border-gold-300'
-                                                        }`}
-                                                    >{slot.label}</button>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )}
-                                    <div className="flex gap-3 pt-6">
-                                        <button disabled={isLoading} type="submit" className="flex-1 bg-gold-500 text-white font-black py-4 rounded-2xl shadow-lg hover:bg-gold-600 transition-colors">تحديث الموعد</button>
-                                        <button disabled={isLoading} type="button" onClick={triggerCancelBooking} className="px-6 bg-red-50 text-red-600 font-black py-4 rounded-2xl border border-red-100 hover:bg-red-500 hover:text-white transition-colors">إلغاء الموعد</button>
-                                    </div>
-                                    <button type="button" onClick={() => setView('home')} className="w-full text-gray-400 font-bold mt-4 hover:text-gray-800 transition-colors">الرجوع للرئيسية</button>
-                                </form>
-                            </div>
-                        </div>
-                    )}
+        // ===================== متابعة بالكود =====================
+        function Track({ pub, alert, onEdit, initialCode }) {
+            const [code, setCode] = useState(initialCode || '');
+            const [res, setRes] = useState(null);
+            const [busy, setBusy] = useState(false);
+            const [err, setErr] = useState('');
+            const look = async (e, c0) => {
+                e && e.preventDefault(); setErr('');
+                const c = (c0 || code).toUpperCase().trim();
+                if (!/^[A-Z0-9]{3,12}$/.test(c)) { setErr(T('الكود غلط', 'Invalid code')); return; }
+                setBusy(true);
+                try {
+                    const bk = await db.collection('online_bookings').doc(c).get();
+                    if (bk.exists) {
+                        const ap = await db.collection('appointments').doc(bk.data().appointmentId).get();
+                        if (!ap.exists) setErr(T('مفيش حجز بالكود ده', 'No booking with this code'));
+                        else setRes({ type: 'booking', id: ap.id, ...ap.data() });
+                    } else {
+                        const cs = await db.collection('consults').doc(c).get();
+                        if (cs.exists) setRes({ type: 'consult', id: cs.id, ...cs.data() });
+                        else setErr(T('مفيش حجز ولا استشارة بالكود ده', 'Nothing found with this code'));
+                    }
+                } catch (x) { console.error(x); setErr(T('حصل خطأ في البحث', 'Search error')); }
+                setBusy(false);
+            };
+            useEffect(() => { if (initialCode) look(null, initialCode); }, []);
+            const cancel = async () => {
+                if (!confirm(T('إلغاء الموعد نهائياً؟', 'Cancel this appointment?'))) return;
+                setBusy(true);
+                try { await db.collection('appointments').doc(res.id).update({ status: 'canceled', canceledAt: new Date().toISOString(), canceledBy: 'patient' }); setRes({ ...res, status: 'canceled' }); alert('success', T('اتلغى الموعد', 'Appointment canceled')); }
+                catch (x) { console.error(x); alert('error', T('حصل خطأ في الإلغاء', 'Cancel failed')); }
+                setBusy(false);
+            };
+            const b = res && pub.branches.find(x => x.id === res.branchId);
+            return (
+                <div className="space-y-5">
+                    <form onSubmit={look} className="flex gap-2"><input value={code} onChange={e => setCode(e.target.value)} placeholder={T('اكتب الكود', 'Enter your code')} dir="ltr" className={inp + ' text-center font-mono tracking-widest uppercase'} /><button disabled={busy} className="bg-gray-900 text-white px-6 rounded-2xl font-black shrink-0">{busy ? '...' : T('بحث', 'Search')}</button></form>
+                    {err && <p className="text-sm font-bold text-red-500 text-center">{err}</p>}
+                    {res && res.type === 'booking' && <div className="bg-gray-50 rounded-2xl p-5 border border-gray-100 space-y-2 animate-fade-in">
+                        <p className="font-black text-gray-900 text-lg">{res.patientName}</p>
+                        <p className="text-sm font-bold text-gray-700">📅 {res.date} • {fmtTime(res.time)}</p>
+                        <p className="text-sm font-bold text-gray-700">{T('د. ', 'Dr. ')}{res.doctorName}{b ? T(' • فرع ', ' • ') + b.name : ''}</p>
+                        {res.service && <p className="text-sm font-bold text-gray-500">{res.service}</p>}
+                        {res.estimate && <p className="text-sm font-black text-gold-700">{T('التكلفة المتوقعة: ', 'Expected cost: ')}{res.estimate}</p>}
+                        {res.status === 'canceled' ? <p className="text-sm font-black text-red-600">{T('الحجز ده ملغي.', 'This booking is canceled.')}</p> :
+                            <div className="flex gap-2 pt-2"><button type="button" onClick={() => onEdit(res)} className="flex-1 bg-gold-500 text-white py-3 rounded-xl font-black">{T('تعديل الموعد', 'Change')}</button><button type="button" disabled={busy} onClick={cancel} className="px-5 bg-red-50 text-red-600 border border-red-100 py-3 rounded-xl font-black">{T('إلغاء', 'Cancel')}</button></div>}
+                    </div>}
+                    {res && res.type === 'consult' && <div className="space-y-3 animate-fade-in">
+                        <div className="bg-gray-50 rounded-2xl p-4 border border-gray-100"><p className="text-[11px] font-black text-gray-400 mb-1">{T('سؤالك', 'Your question')} • {res.topic}</p><p className="text-sm font-bold text-gray-800 whitespace-pre-line">{res.question}</p></div>
+                        {(res.replies || []).length ? res.replies.map((r, i) => <div key={i} className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4"><p className="text-[11px] font-black text-emerald-700 mb-1">{T('رد ', 'Reply from ')}{r.by}</p><p className="text-sm font-bold text-gray-800 whitespace-pre-line">{r.text}</p></div>)
+                            : <p className="text-sm font-bold text-amber-700 bg-amber-50 rounded-2xl p-4 text-center">{T('لسه مفيش رد — الدكتور هيرد عليك قريب. ارجع شوف بنفس الكود.', 'No reply yet — check back soon with the same code.')}</p>}
+                    </div>}
                 </div>
             );
         }
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+        // ===================== الصفحة =====================
+        function App() {
+            const pub = usePublicData();
+            const [tab, setTab] = useState(['book', 'consult', 'track'].includes(QS.get('tab')) ? QS.get('tab') : 'book');
+            const [done, setDone] = useState(null);
+            const [editApp, setEditApp] = useState(null);
+            const [msg, setMsg] = useState(null);
+            const alert = (type, text) => setMsg({ type, text });
+            // جوه الموقع: نبلّغ الصفحة الأم بطول المحتوى عشان الإطار يكبر ويصغر لوحده
+            useEffect(() => {
+                if (!EMBED || !window.parent || window.parent === window) return;
+                const send = () => window.parent.postMessage({ type: 'ne-booking-height', h: document.documentElement.scrollHeight }, '*');
+                const ro = new ResizeObserver(send); ro.observe(document.body); send();
+                const onMsg = e => { if (e.data && e.data.type === 'ne-booking-tab' && ['book', 'consult', 'track'].includes(e.data.tab)) { setTab(e.data.tab); setDone(null); setEditApp(null); } };
+                window.addEventListener('message', onMsg);
+                return () => { ro.disconnect(); window.removeEventListener('message', onMsg); };
+            }, []);
+            const go = t => { setTab(t); setDone(null); setEditApp(null); };
+            const TABS = [['book', T('حجز موعد', 'Book')], ['consult', T('استشارة أونلاين مجانية', 'Free online consultation')], ['track', T('متابعة بالكود', 'Track by code')]];
+            return (
+                <div className={EMBED ? 'p-1' : 'min-h-screen pb-12 px-4'}>
+                    {!EMBED && <div className="text-center pt-8 mb-6"><img src="https://i.ibb.co/qLw7Tcqv/logo-Dr-shahenda-original.png" alt="New Era" className="mx-auto h-20 mb-3" /><h1 className="text-2xl font-black text-gray-800">NEW ERA DENTAL CENTER</h1></div>}
+                    <div className={`w-full ${EMBED ? '' : 'max-w-3xl mx-auto'} bg-white rounded-[32px] shadow-[0_15px_50px_rgb(0,0,0,0.07)] border border-gray-100 p-5 sm:p-8`}>
+                        <div className="flex bg-gray-100 p-1 rounded-2xl mb-6 overflow-x-auto">{TABS.map(([k, n]) => <button key={k} type="button" onClick={() => go(k)} className={`flex-1 px-3 py-2.5 rounded-xl text-xs sm:text-sm font-black whitespace-nowrap transition-all ${tab === k ? 'bg-white shadow text-gold-600' : 'text-gray-500'}`}>{n}</button>)}</div>
+                        {pub.status !== 'ok' && !pub.branches.length ? <p className={`text-center font-bold p-6 ${pub.status === 'loading' ? 'text-gray-400 animate-pulse' : 'text-gray-500'}`}>{pub.status === 'loading' ? T('جاري التحميل...', 'Loading...') : T('مش قادرين نوصل دلوقتي، بنحاول تاني...', 'Can\'t connect right now, retrying...')}</p>
+                        : done ? <Done d={done} onBack={() => go(done.type === 'consult' ? 'consult' : 'book')} />
+                        : tab === 'book' ? (editApp ? <><p className="text-sm font-black text-gold-700 mb-4">{T('تعديل الحجز ', 'Editing ')}#{editApp.bookingCode}</p><BookForm key={'e' + editApp.id} pub={pub} initial={editApp} alert={alert} onDone={d => setDone({ type: 'booking', edited: true, ...d })} /></>
+                            : <BookForm key="new" pub={pub} alert={alert} onDone={d => setDone({ type: 'booking', ...d })} />)
+                        : tab === 'consult' ? <ConsultForm pub={pub} alert={alert} onDone={d => setDone({ type: 'consult', ...d })} />
+                        : <Track pub={pub} alert={alert} initialCode={QS.get('code') || ''} onEdit={a => { setEditApp(a); setTab('book'); }} />}
+                    </div>
+                    {msg && <div className="fixed inset-0 bg-gray-900/50 z-50 flex items-center justify-center p-4" onClick={() => setMsg(null)}>
+                        <div className="bg-white rounded-3xl p-6 max-w-sm w-full text-center animate-scale-in" onClick={e => e.stopPropagation()}>
+                            <p className={`font-black text-lg mb-4 ${msg.type === 'error' ? 'text-red-600' : 'text-emerald-600'}`}>{msg.text}</p>
+                            <button type="button" onClick={() => setMsg(null)} className="w-full bg-gray-900 text-white py-3 rounded-2xl font-black">{T('تمام', 'OK')}</button>
+                        </div></div>}
+                </div>
+            );
+        }
+
+        function Done({ d, onBack }) {
+            const consult = d.type === 'consult';
+            const code = consult ? d.code : d.bookingCode;
+            return (
+                <div className="text-center space-y-5 animate-slide-up">
+                    <div className="text-emerald-500 flex justify-center">{I.check(56)}</div>
+                    <h2 className="text-2xl font-black text-gray-800">{consult ? T('استشارتك اتبعتت!', 'Question sent!') : d.edited ? T('اتعدل الحجز!', 'Booking updated!') : T('تم الحجز بنجاح!', 'Booked successfully!')}</h2>
+                    {!consult && <div className="bg-gray-50 rounded-2xl p-5 text-right space-y-1.5 border border-gray-100">
+                        <p className="font-black text-gray-900">{d.patientName}</p>
+                        <p className="text-sm font-bold text-gray-700">📅 {d.date} • {fmtTime(d.time)}</p>
+                        <p className="text-sm font-bold text-gray-700">{T('د. ', 'Dr. ')}{d.doctorName}{d.branch ? T(' • فرع ', ' • ') + d.branch.name : ''}</p>
+                        {d.service && <p className="text-sm font-bold text-gray-500">{d.service}</p>}
+                        {d.estimate && <p className="text-sm font-black text-gold-700">{T('التكلفة المتوقعة: ', 'Expected cost: ')}{d.estimate}</p>}
+                        {d.branch && d.branch.address && <p className="text-xs font-bold text-gray-500">📍 {d.branch.address}</p>}
+                    </div>}
+                    {consult && <p className="text-sm font-bold text-gray-500">{T('الدكتور هيرد عليك في أقرب وقت. تابع الرد من تبويب "متابعة بالكود".', 'A doctor will reply soon. Check the reply from the "Track by code" tab.')}</p>}
+                    <div className="bg-gold-50 border-2 border-dashed border-gold-400 rounded-2xl p-5">
+                        <p className="text-xs font-black text-gold-700 mb-1">{consult ? T('كود الاستشارة', 'Your consultation code') : T('كود الحجز', 'Your booking code')}</p>
+                        <p className="text-3xl font-black font-mono tracking-[0.25em] text-gray-900" dir="ltr">{code}</p>
+                        <p className="text-[11px] font-bold text-gray-500 mt-2">{consult ? T('احتفظ بيه عشان تشوف رد الدكتور.', 'Keep it to see the doctor\'s reply.') : T('احتفظ بيه عشان تعدّل أو تلغي الموعد.', 'Keep it to change or cancel.')}</p>
+                    </div>
+                    <button type="button" onClick={onBack} className="w-full bg-gray-900 text-white py-3.5 rounded-2xl font-black">{T('رجوع', 'Back')}</button>
+                </div>
+            );
+        }
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
     </script>
 </body>
 </html>
