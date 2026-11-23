@@ -13,7 +13,7 @@
         const db = firebase.firestore();
         // اتصال Firestore بطريقة long polling: الاتصال المباشر (WebChannel) بيرجع 503 عند بعض شبكات النت فالصفحة تفتكر نفسها offline والحجز يفشل
         db.settings({ experimentalForceLongPolling: true, experimentalAutoDetectLongPolling: false, merge: true }); // الاتنين مع بعض بيوقّعوا الصفحة
-        const BOOKING_VERSION = '2.5';
+        const BOOKING_VERSION = '2.6';
         // ===== بيكسل فيسبوك (نفس الكود المتسجل في لوحة الموقع: settings/site → seo.pixel) =====
         // بيسجل PageView لكل زيارة، و Lead لكل حجز جديد (eventID = كود الحجز عشان يتطابق بعدين مع Conversions API)
         // ملحوظة: ممنوع نبعت اسم الخدمة أو التخصص لفيسبوك (بيعتبرها بيانات صحية وممكن يقيّد البيكسل) — الفرع بس.
@@ -78,6 +78,31 @@
         const SLOTS = (() => { const s = []; for (let i = 16; i <= 21; i++) { s.push(i + ':00', i + ':30'); } s.push('22:00'); return s; })();
         const fmtTime = v => { const [h, m] = v.split(':').map(Number); return (h % 12 || 12) + ':' + String(m).padStart(2, '0') + ' ' + (h >= 12 ? T('م', 'PM') : T('ص', 'AM')); };
         const slotId = (b, d, date, time) => [b, d || 'none', date, time].join('_');
+        // حد أقصى للحجوزات الجاية لكل رقم موبايل — نفس اللي في الموقع، والقواعد (firestore.rules) بتشترطه في كل حجز أونلاين
+        const BK_MAX_PER_PHONE = 2;
+        const bkPhoneKey = ph => String(ph || '').replace(/\D/g, '').slice(-10);
+        const bkPb = list => ({ list, toks: list.map(x => x.t), at: Date.now() });
+        // ===== مصدر الحجز: حملة ميتا / جوجل / الموقع / واتساب / مباشر — بيتحفظ أول ما الزائر يدخل (30 يوم) ويتسجل مع الحجز =====
+        const ATTR_KEY = 'ne_attrib_v1';
+        const neAttrib = (() => {
+            try {
+                const q = new URLSearchParams(location.search), g = k => String(q.get(k) || '').slice(0, 100);
+                const ref = (() => { try { return document.referrer ? new URL(document.referrer).hostname : ''; } catch (e) { return ''; } })();
+                const utm = { utm_source: g('utm_source'), utm_medium: g('utm_medium'), utm_campaign: g('utm_campaign'), utm_content: g('utm_content'), utm_term: g('utm_term') };
+                const src = (utm.utm_source || '').toLowerCase(), med = (utm.utm_medium || '').toLowerCase();
+                let channel = q.get('fbclid') || /facebook|fb|instagram|ig|meta/.test(src) ? 'meta' : q.get('gclid') || q.get('gbraid') || q.get('wbraid') || /google/.test(src) ? 'google' : /whatsapp|wa/.test(src) || /whatsapp|wa\.me/.test(ref) ? 'whatsapp' : /tiktok/.test(src) ? 'tiktok' : /neweradentalcenter/.test(ref) ? 'website' : /facebook|instagram/.test(ref) ? 'meta' : /google\./.test(ref) ? 'google' : '';
+                if (q.get('src')) channel = g('src').toLowerCase();
+                const paid = !!(q.get('fbclid') || q.get('gclid') || q.get('gbraid') || q.get('wbraid') || /cpc|paid|ads?|cpm/.test(med));
+                const cur = { channel: channel || 'direct', paid, ...Object.fromEntries(Object.entries(utm).filter(([, v]) => v)), ...(q.get('fbclid') ? { fbclid: '1' } : {}), ...(q.get('gclid') || q.get('gbraid') || q.get('wbraid') ? { gclid: '1' } : {}), ...(ref ? { ref: ref.slice(0, 80) } : {}), landing: location.pathname.slice(0, 60), at: new Date().toISOString() };
+                const old = lsGetA();
+                // أول لمسة إعلانية بتكسب (لو الزائر رجع بعدين مباشر، الحجز بيتحسب للإعلان اللي جابه)
+                const keep = old && Date.now() - Date.parse(old.at || 0) < 30 * 864e5 && (old.channel !== 'direct' && (cur.channel === 'direct' || cur.channel === 'website')) ? old : cur;
+                try { localStorage.setItem(ATTR_KEY, JSON.stringify(keep)); } catch (e) { }
+                return keep;
+            } catch (e) { return { channel: 'direct' }; }
+            function lsGetA() { try { return JSON.parse(localStorage.getItem(ATTR_KEY) || 'null'); } catch (e) { return null; } }
+        })();
+        const attribDoc = () => { const a = neAttrib || {}, o = {}; ['channel', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'fbclid', 'gclid', 'ref', 'landing'].forEach(k => { if (a[k]) o[k] = String(a[k]).slice(0, 100); }); o.paid = !!a.paid; o.via = 'booking'; return o; };
         const doctorWorks = (doc, branchId, date) => { const days = doc && doc.days && doc.days[branchId]; if (!date || !Array.isArray(days) || !days.length) return true; return days.includes(new Date(date + 'T00:00:00').getDay()); };
         const num = x => Number(x) || 0;
         const money = n => num(n).toLocaleString('en-US') + ' ' + T('ج', 'EGP');
@@ -218,7 +243,7 @@
                 if (off) return alert('error', T('الدكتور مش متاح في اليوم ده', 'Doctor not available that day'));
                 if (!f.time) return alert('error', T('اختار الوقت', 'Choose a time'));
                 if (!lockSend()) return; setBusy(true);
-                const base = { patientName: f.name.trim(), phone: f.phone.trim(), branchId: f.branchId, doctorId: f.doctorId, doctorName: (doc && doc.name) || '', service: (chosen.map(s => s.name).join('، ') || T('كشف', 'Checkup')).slice(0, 200), serviceIds: f.serviceIds.slice(0, 20), estimate: (estimate || (branch && branch.consultFee ? T('الكشف: ', 'Consultation: ') + branch.consultFee : '')).slice(0, 80), date: f.date, time: f.time };
+                const base = { patientName: f.name.trim(), phone: String(f.phone || '').replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace(/[^\d+]/g, '').slice(0, 20), branchId: f.branchId, doctorId: f.doctorId, doctorName: (doc && doc.name) || '', service: (chosen.map(s => s.name).join('، ') || T('كشف', 'Checkup')).slice(0, 200), serviceIds: f.serviceIds.slice(0, 20), estimate: (estimate || (branch && branch.consultFee ? T('الكشف: ', 'Consultation: ') + branch.consultFee : '')).slice(0, 80), date: f.date, time: f.time };
                 const sid = slotId(base.branchId, base.doctorId, base.date, base.time);
                 try {
                     if (editing) {
@@ -227,20 +252,30 @@
                         const ch = (base.date !== initial.date || base.time !== initial.time || base.doctorId !== (initial.doctorId || '')) ? { rescheduledAt: new Date().toISOString(), rescheduledBy: 'patient', prevDate: initial.date || '', prevTime: initial.time || '', prevDoctorId: initial.doctorId || '', prevDoctorName: initial.doctorName || '' } : {};
                         await db.runTransaction(async tx => {
                             const cur = await tx.get(appRef); if (!cur.exists) throw new Error('GONE');
-                            if (sid !== oldSid) { const sRef = db.collection('booked_slots').doc(sid); if ((await tx.get(sRef)).exists) throw new Error('SLOT_TAKEN'); tx.set(sRef, { branchId: base.branchId, doctorId: base.doctorId, date: base.date, time: base.time, at: Date.now(), appId: initial.id }); }
+                            const oldPb = initial.pbTok && initial.phoneKey ? db.collection('phone_book').doc(initial.phoneKey) : null, pbSn = oldPb ? await tx.get(oldPb) : null;
+                            const slotTaken = sid !== oldSid && (await tx.get(db.collection('booked_slots').doc(sid))).exists;
+                            if (slotTaken) throw new Error('SLOT_TAKEN');
+                            if (pbSn && pbSn.exists) tx.set(oldPb, bkPb(((pbSn.data().list) || []).filter(x => x && x.d >= localDay()).map(x => x.t === initial.pbTok ? { ...x, d: base.date } : x).slice(-BK_MAX_PER_PHONE)));
+                            if (sid !== oldSid) { const sRef = db.collection('booked_slots').doc(sid); tx.set(sRef, { branchId: base.branchId, doctorId: base.doctorId, date: base.date, time: base.time, at: Date.now(), appId: initial.id }); }
                             tx.update(appRef, { ...base, ...ch });
                         });
                         onDone({ ...initial, ...base, branch });
                     } else {
                         const sRef = db.collection('booked_slots').doc(sid);
+                        const pk = bkPhoneKey(base.phone);
+                        if (pk.length < 10) throw new Error('BAD_PHONE');
+                        const pbRef = db.collection('phone_book').doc(pk), tok = newCode() + newCode();
                         let res = null;
                         for (let i = 0; i < 5 && !res; i++) {
                             const code = newCode(), appRef = db.collection('appointments').doc(), bRef = db.collection('online_bookings').doc(code);
                             try {
                                 await db.runTransaction(async tx => {
-                                    const [bs, ss] = await Promise.all([tx.get(bRef), tx.get(sRef)]);
+                                    const [bs, ss, pb] = await Promise.all([tx.get(bRef), tx.get(sRef), tx.get(pbRef)]);
                                     if (ss.exists) throw new Error('SLOT_TAKEN'); if (bs.exists) throw new Error('CODE_TAKEN');
-                                    tx.set(appRef, { ...base, bookingCode: code, source: 'online', status: 'unconfirmed', createdAt: new Date().toISOString() });
+                                    const list = ((pb.exists && pb.data().list) || []).filter(x => x && x.d >= localDay());
+                                    if (list.length >= BK_MAX_PER_PHONE) throw new Error('LIMIT');
+                                    tx.set(pbRef, bkPb([...list, { d: base.date, t: tok }]));
+                                    tx.set(appRef, { ...base, phoneKey: pk, pbTok: tok, attrib: attribDoc(), bookingCode: code, source: 'online', status: 'unconfirmed', createdAt: new Date().toISOString() });
                                     tx.set(bRef, { appointmentId: appRef.id });
                                     tx.set(sRef, { branchId: base.branchId, doctorId: base.doctorId, date: base.date, time: base.time, at: Date.now(), appId: appRef.id });
                                 });
@@ -255,6 +290,8 @@
                     console.error(err);
                     if (err.message === 'SLOT_TAKEN') { set({ time: '' }); alert('error', T('الموعد ده اتحجز حالاً، اختار وقت تاني', 'This slot was just booked, pick another')); }
                     else if (err.message === 'GONE') alert('error', T('الحجز ده مبقاش موجود', 'This booking no longer exists'));
+                    else if (err.message === 'LIMIT') alert('error', T('الرقم ده عليه ' + BK_MAX_PER_PHONE + ' حجز جايين بالفعل. تقدر تعدّل أو تلغي حجز منهم من "متابعة بالكود"، أو كلّمنا على تليفون الفرع.', 'This number already has ' + BK_MAX_PER_PHONE + ' upcoming bookings. Change or cancel one from "Track by code", or call the branch.'));
+                    else if (err.message === 'BAD_PHONE') alert('error', T('رقم الموبايل مش صحيح — اكتبه كامل', 'Please enter a valid mobile number'));
                     else alert('error', T('حصل خطأ، اتأكد من النت وجرب تاني', 'Something went wrong, check your connection'));
                 }
                 setBusy(false); unlockSend();
@@ -392,7 +429,15 @@
             const cancel = async () => {
                 if (!confirm(T('إلغاء الموعد نهائياً؟', 'Cancel this appointment?'))) return;
                 setBusy(true);
-                try { await db.collection('appointments').doc(res.id).update({ status: 'canceled', canceledAt: new Date().toISOString(), canceledBy: 'patient' }); setRes({ ...res, status: 'canceled' }); alert('success', T('اتلغى الموعد', 'Appointment canceled')); }
+                try {
+                    const aRef = db.collection('appointments').doc(res.id), pbRef = res.pbTok && res.phoneKey ? db.collection('phone_book').doc(res.phoneKey) : null;
+                    await db.runTransaction(async tx => {
+                        const sn = pbRef ? await tx.get(pbRef) : null;
+                        tx.update(aRef, { status: 'canceled', canceledAt: new Date().toISOString(), canceledBy: 'patient' });
+                        // الحجز الملغي مبيتحسبش من حد الحجوزات
+                        if (sn && sn.exists) tx.set(pbRef, bkPb((sn.data().list || []).filter(x => x && x.t !== res.pbTok && x.d >= localDay())));
+                    });
+                    setRes({ ...res, status: 'canceled' }); alert('success', T('اتلغى الموعد', 'Appointment canceled')); }
                 catch (x) { console.error(x); alert('error', T('حصل خطأ في الإلغاء', 'Cancel failed')); }
                 setBusy(false);
             };
