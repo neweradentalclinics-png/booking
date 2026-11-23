@@ -11,7 +11,9 @@
         };
         if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
-        const BOOKING_VERSION = '2.3';
+        // اتصال Firestore بطريقة long polling: الاتصال المباشر (WebChannel) بيرجع 503 عند بعض شبكات النت فالصفحة تفتكر نفسها offline والحجز يفشل
+        db.settings({ experimentalForceLongPolling: true, merge: true });
+        const BOOKING_VERSION = '2.4';
         // ===== بيكسل فيسبوك (نفس الكود المتسجل في لوحة الموقع: settings/site → seo.pixel) =====
         // بيسجل PageView لكل زيارة، و Lead لكل حجز جديد (eventID = كود الحجز عشان يتطابق بعدين مع Conversions API)
         // ملحوظة: ممنوع نبعت اسم الخدمة أو التخصص لفيسبوك (بيعتبرها بيانات صحية وممكن يقيّد البيكسل) — الفرع بس.
