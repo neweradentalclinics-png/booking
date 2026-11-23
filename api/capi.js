@@ -27,7 +27,8 @@ module.exports = async (req, res) => {
     if (!/^[A-Z0-9]{6,12}$/.test(code)) return res.status(400).json({ ok: false });
     // الحجز لازم يكون موجود فعلاً (محدش يقدر يبعت حجوزات وهمية لفيسبوك)
     const chk = await fetch(`${FS}/online_bookings/${code}?key=${FS_KEY}`);
-    if (!chk.ok) return res.status(404).json({ ok: false });
+    // لو قراءات Firebase خلصت (429) أو السيرفر واقع، منقدرش نتأكد — بنبعت الحدث برضه بدل ما يضيع. 404 بس هو اللي بيترفض
+    if (!chk.ok && chk.status !== 429 && chk.status < 500) return res.status(404).json({ ok: false });
     const ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
     const ph = egPhone(b.phone);
     const user_data = { client_user_agent: String(req.headers['user-agent'] || '').slice(0, 400) };

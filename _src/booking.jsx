@@ -13,7 +13,7 @@
         const db = firebase.firestore();
         // اتصال Firestore بطريقة long polling: الاتصال المباشر (WebChannel) بيرجع 503 عند بعض شبكات النت فالصفحة تفتكر نفسها offline والحجز يفشل
         db.settings({ experimentalForceLongPolling: true, experimentalAutoDetectLongPolling: false, merge: true }); // الاتنين مع بعض بيوقّعوا الصفحة
-        const BOOKING_VERSION = '2.7';
+        const BOOKING_VERSION = '2.8';
         // ===== بيكسل فيسبوك (نفس الكود المتسجل في لوحة الموقع: settings/site → seo.pixel) =====
         // بيسجل PageView لكل زيارة، و Lead لكل حجز جديد (eventID = كود الحجز عشان يتطابق بعدين مع Conversions API)
         // ملحوظة: ممنوع نبعت اسم الخدمة أو التخصص لفيسبوك (بيعتبرها بيانات صحية وممكن يقيّد البيكسل) — الفرع بس.
@@ -22,6 +22,12 @@
         const neGoogle = code => { try { if (!window.gtag) return; window.gtag('event', 'generate_lead', { method: 'booking_page' }); if (window.__neAdsBook) window.gtag('event', 'conversion', { send_to: window.__neAdsBook, transaction_id: code }); } catch (e) { } };
         const ck = n => (document.cookie.match('(?:^|; )' + n + '=([^;]*)') || [])[1] || '';
         const neCapi = (code, phone) => { try { fetch('/api/capi', { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, phone, url: location.href, fbp: ck('_fbp'), fbc: ck('_fbc') }) }).catch(() => { }); } catch (e) { } };
+        // البيكسل الأساسي مكتوب هنا مباشرة ويشتغل فوراً — مش مستني Firebase (لو حد قراءات Firebase خلص، التتبع كان بيقف خالص)
+        const NE_PIXEL = '865216456362855';
+        try {
+            !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');
+            window.fbq('init', NE_PIXEL); window.fbq('track', 'PageView');
+        } catch (e) { }
         (() => {
             try {
                 db.collection('settings').doc('site').get().then(d => {
@@ -37,10 +43,10 @@
                             window.__neAdsBook = awOk ? aw : '';
                         }
                     } catch (e) { }
+                    // لو في لوحة الموقع بيكسل تاني غير الأساسي، بنشغّله كمان (الأساسي شغال من الأول)
                     const px = String(se.pixel || '').trim();
-                    if (!/^\d{8,20}$/.test(px) || window.fbq) return;
-                    !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');
-                    window.fbq('init', px); window.fbq('track', 'PageView');
+                    if (!/^\d{8,20}$/.test(px) || px === NE_PIXEL || !window.fbq) return;
+                    window.fbq('init', px); window.fbq('trackSingle', px, 'PageView');
                 }).catch(() => { });
             } catch (e) { }
         })();
