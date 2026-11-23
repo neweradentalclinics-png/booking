@@ -11,7 +11,20 @@
         };
         if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
-        const BOOKING_VERSION = '2.1';
+        const BOOKING_VERSION = '2.2';
+        // ===== بيكسل فيسبوك (نفس الكود المتسجل في لوحة الموقع: settings/site → seo.pixel) =====
+        // بيسجل PageView لكل زيارة، و Lead لكل حجز جديد (eventID = كود الحجز عشان يتطابق بعدين مع Conversions API)
+        const neTrack = (name, params, eventID) => { try { if (window.fbq) window.fbq('track', name, params || {}, eventID ? { eventID } : undefined); } catch (e) { } };
+        (() => {
+            try {
+                db.collection('settings').doc('site').get().then(d => {
+                    const px = String(((d.exists && d.data().seo) || {}).pixel || '').trim();
+                    if (!/^\d{8,20}$/.test(px) || window.fbq) return;
+                    !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');
+                    window.fbq('init', px); window.fbq('track', 'PageView');
+                }).catch(() => { });
+            } catch (e) { }
+        })();
         // ===== قسم الجلدية =====
         // أي تخصص اسمه فيه "جلد/بشرة/Derma/Skin" (أو dept = 'derma') بيتحسب جلدية: خدماته ودكاترته بيظهروا تحت "جلدية" بس،
         // والفروع اللي بتظهر في الجلدية هي اللي فيها دكتور جلدية. لو مفيش بيانات جلدية في السيستم، الاختيار مش بيظهر خالص.
@@ -229,6 +242,7 @@
                             } catch (err) { if (err.message !== 'CODE_TAKEN') throw err; }
                         }
                         if (!res) throw new Error('CODE_TAKEN');
+                        neTrack('Lead', { content_name: base.service, content_category: dept === 'derma' ? 'derma' : 'dental', branch: (branch && branch.name) || '' }, res.bookingCode);
                         onDone({ ...res, branch });
                     }
                 } catch (err) {
@@ -315,6 +329,7 @@
                         catch (err) { if (err.message !== 'TAKEN') throw err; }
                     }
                     if (!code) throw new Error('TAKEN');
+                    neTrack('Contact', { content_category: 'consult' }, code);
                     onDone({ code, ...data });
                 } catch (err) { console.error(err); alert('error', T('حصل خطأ، اتأكد من النت وجرب تاني', 'Something went wrong, check your connection')); }
                 setBusy(false); unlockSend();
