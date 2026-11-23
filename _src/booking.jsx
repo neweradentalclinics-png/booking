@@ -11,10 +11,14 @@
         };
         if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
-        const BOOKING_VERSION = '2.2';
+        const BOOKING_VERSION = '2.3';
         // ===== بيكسل فيسبوك (نفس الكود المتسجل في لوحة الموقع: settings/site → seo.pixel) =====
         // بيسجل PageView لكل زيارة، و Lead لكل حجز جديد (eventID = كود الحجز عشان يتطابق بعدين مع Conversions API)
+        // ملحوظة: ممنوع نبعت اسم الخدمة أو التخصص لفيسبوك (بيعتبرها بيانات صحية وممكن يقيّد البيكسل) — الفرع بس.
         const neTrack = (name, params, eventID) => { try { if (window.fbq) window.fbq('track', name, params || {}, eventID ? { eventID } : undefined); } catch (e) { } };
+        // نفس الحجز من السيرفر (Conversions API) بنفس الكود، عشان اللي البيكسل بيتوهه يتحسب
+        const ck = n => (document.cookie.match('(?:^|; )' + n + '=([^;]*)') || [])[1] || '';
+        const neCapi = (code, phone) => { try { fetch('/api/capi', { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, phone, url: location.href, fbp: ck('_fbp'), fbc: ck('_fbc') }) }).catch(() => { }); } catch (e) { } };
         (() => {
             try {
                 db.collection('settings').doc('site').get().then(d => {
@@ -242,7 +246,7 @@
                             } catch (err) { if (err.message !== 'CODE_TAKEN') throw err; }
                         }
                         if (!res) throw new Error('CODE_TAKEN');
-                        neTrack('Lead', { content_name: base.service, content_category: dept === 'derma' ? 'derma' : 'dental', branch: (branch && branch.name) || '' }, res.bookingCode);
+                        neTrack('Lead', { branch: (branch && branch.name) || '' }, res.bookingCode); neCapi(res.bookingCode, base.phone);
                         onDone({ ...res, branch });
                     }
                 } catch (err) {
