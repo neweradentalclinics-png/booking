@@ -1,0 +1,468 @@
+        const { useState, useEffect, useMemo, useRef } = React;
+
+        // --- إعدادات نفس قاعدة البيانات ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyDQ17UevaMBy2aVYxsrLNpdQCvn92uSKi0",
+            authDomain: "new-era-dental-center.firebaseapp.com",
+            projectId: "new-era-dental-center",
+            storageBucket: "new-era-dental-center.firebasestorage.app",
+            messagingSenderId: "11521109321",
+            appId: "1:11521109321:web:49e24509d937ff3e20be98"
+        };
+        if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+        const BOOKING_VERSION = '2.1';
+        // ===== قسم الجلدية =====
+        // أي تخصص اسمه فيه "جلد/بشرة/Derma/Skin" (أو dept = 'derma') بيتحسب جلدية: خدماته ودكاترته بيظهروا تحت "جلدية" بس،
+        // والفروع اللي بتظهر في الجلدية هي اللي فيها دكتور جلدية. لو مفيش بيانات جلدية في السيستم، الاختيار مش بيظهر خالص.
+        const DERMA_RE = /جلد|بشر[ةه]|derma|skin/i;
+        const isDermaSpec = sp => !!sp && (sp.dept === 'derma' || DERMA_RE.test(sp.name || '') || DERMA_RE.test(sp.nameEn || ''));
+        function deptView(pub, dept) {
+            const dSpec = new Set(pub.specialties.filter(isDermaSpec).map(x => x.id));
+            if (!dSpec.size) return { ...pub, hasDerma: false, dermaBranches: [] };
+            const docIsDerma = d => (d.specs || []).some(id => dSpec.has(id));
+            const docIsDental = d => !(d.specs || []).length || (d.specs || []).some(id => !dSpec.has(id));
+            const dermaDocs = pub.doctors.filter(docIsDerma);
+            const dermaBranchIds = new Set(dermaDocs.flatMap(d => d.branchIds || []));
+            const dermaBranches = pub.branches.filter(b => dermaBranchIds.has(b.id));
+            const hasDerma = dermaBranches.length > 0;
+            if (!hasDerma) return { ...pub, specialties: pub.specialties.filter(x => !dSpec.has(x.id)), services: pub.services.filter(x => !dSpec.has(x.specialtyId)), hasDerma: false, dermaBranches: [] };
+            const derma = dept === 'derma';
+            return {
+                ...pub, hasDerma, dermaBranches,
+                branches: derma ? dermaBranches : pub.branches,
+                specialties: pub.specialties.filter(x => dSpec.has(x.id) === derma),
+                services: pub.services.filter(x => dSpec.has(x.specialtyId) === derma),
+                doctors: pub.doctors.filter(d => derma ? docIsDerma(d) : docIsDental(d)).map(d => derma ? d : { ...d, specs: (d.specs || []).filter(id => !dSpec.has(id)) })
+            };
+        }
+        // تخزين بسيط على جهاز الزائر (لو المتصفح مانعه بنكمّل عادي)
+        const lsGet = k => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } };
+        const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+        // منع إرسال الحجز/الاستشارة مرتين لو الزرار اتداس مرتين ورا بعض
+        let SEND_LOCK = 0;
+        const lockSend = () => { const now = Date.now(); if (now - SEND_LOCK < 20000) return false; SEND_LOCK = now; return true; };
+        const unlockSend = () => { SEND_LOCK = 0; };
+
+        // --- إعدادات الصفحة من الرابط: embed=1 (جوه الموقع) / lang=en / tab=book|consult|track / service=اسم الخدمة ---
+        const QS = new URLSearchParams(location.search);
+        const EMBED = QS.get('embed') === '1';
+        const LANG = QS.get('lang') === 'en' ? 'en' : 'ar';
+        const T = (ar, en) => LANG === 'en' ? en : ar;
+        document.documentElement.lang = LANG; document.documentElement.dir = LANG === 'en' ? 'ltr' : 'rtl';
+        if (EMBED) document.body.style.background = 'transparent';
+
+        // --- أدوات ---
+        const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+        const newCode = (n = 8) => { let r = ''; for (let i = 0; i < n; i++) r += CODE_CHARS.charAt(Math.floor(Math.random() * CODE_CHARS.length)); return r; };
+        const localDay = (d = new Date()) => d.toLocaleDateString('en-CA');
+        const SLOTS = (() => { const s = []; for (let i = 16; i <= 21; i++) { s.push(i + ':00', i + ':30'); } s.push('22:00'); return s; })();
+        const fmtTime = v => { const [h, m] = v.split(':').map(Number); return (h % 12 || 12) + ':' + String(m).padStart(2, '0') + ' ' + (h >= 12 ? T('م', 'PM') : T('ص', 'AM')); };
+        const slotId = (b, d, date, time) => [b, d || 'none', date, time].join('_');
+        const doctorWorks = (doc, branchId, date) => { const days = doc && doc.days && doc.days[branchId]; if (!date || !Array.isArray(days) || !days.length) return true; return days.includes(new Date(date + 'T00:00:00').getDay()); };
+        const num = x => Number(x) || 0;
+        const money = n => num(n).toLocaleString('en-US') + ' ' + T('ج', 'EGP');
+        const priceText = s => { const a = num(s.priceFrom), b = num(s.priceTo); if (!a && !b) return T('حسب الحالة', 'Varies'); return (!b || b === a) ? money(a) : num(a).toLocaleString('en-US') + ' – ' + money(b); };
+        // خريطة الفرع: كود التضمين من جوجل، أو رابط فيه إحداثيات، أو العنوان
+        const mapSrc = b => {
+            const e = String(b.mapEmbed || '').trim();
+            const m = e.match(/src=["']([^"']+)["']/); if (m) return m[1];
+            if (/^https:\/\/(www\.)?google\.[^/]+\/maps\/embed/.test(e)) return e;
+            const ll = String(b.mapsLink || '').match(/@(-?\d+\.\d+),(-?\d+\.\d+)/) || String(b.mapsLink || '').match(/[?&]q=(-?\d+\.\d+),(-?\d+\.\d+)/);
+            const q = ll ? ll[1] + ',' + ll[2] : (e || [b.name, b.address].filter(Boolean).join(' ') || 'New Era Dental Center');
+            return 'https://maps.google.com/maps?q=' + encodeURIComponent(q) + '&z=16&hl=' + LANG + '&output=embed';
+        };
+
+        // --- أيقونات ---
+        const I = {
+            check: (s = 22) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>,
+            pin: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>,
+            clock: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
+            wait: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 22h14M5 2h14M17 22v-4.17a2 2 0 0 0-.59-1.42L12 12l-4.41 4.41A2 2 0 0 0 7 17.83V22M7 2v4.17a2 2 0 0 0 .59 1.42L12 12l4.41-4.41A2 2 0 0 0 17 6.17V2"/></svg>,
+            money: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2"/></svg>,
+            phone: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>,
+            x: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        };
+
+        // --- البيانات العامة (فروع، دكاترة، تخصصات، خدمات) ---
+        function usePublicData() {
+            // آخر بيانات محفوظة على الجهاز: الصفحة تفتح فوراً بيها، وبعدين تتحدّث من قاعدة البيانات
+            const [st, setSt] = useState(() => { const c = lsGet('ne_bk_pub'); return c && Array.isArray(c.branches) && c.branches.length ? { ...c, status: 'ok' } : { status: 'loading', branches: [], doctors: [], specialties: [], services: [] }; });
+            useEffect(() => { if (st.status === 'ok' && st.branches.length) lsSet('ne_bk_pub', { branches: st.branches, doctors: st.doctors, specialties: st.specialties, services: st.services }); }, [st]);
+            const [tryN, setTryN] = useState(0);
+            useEffect(() => {
+                const sortO = a => a.sort((x, y) => (x.order ?? 999) - (y.order ?? 999) || (x.name || '').localeCompare(y.name || '', 'ar'));
+                const map = s => s.docs.map(d => ({ id: d.id, ...d.data() }));
+                let t;
+                const fail = e => { console.error(e); setSt(p => p.status === 'ok' ? p : { ...p, status: 'error' }); t = setTimeout(() => setTryN(n => n + 1), 4000); };
+                const u = [
+                    db.collection('branches').onSnapshot(s => setSt(p => ({ ...p, status: 'ok', branches: sortO(map(s)) })), fail),
+                    db.collection('public_doctors').onSnapshot(s => setSt(p => ({ ...p, doctors: map(s) })), fail),
+                    db.collection('specialties').onSnapshot(s => setSt(p => ({ ...p, specialties: sortO(map(s)) })), () => {}),
+                    db.collection('services').onSnapshot(s => setSt(p => ({ ...p, services: sortO(map(s)).filter(x => x.active !== false) })), () => {})
+                ];
+                return () => { u.forEach(f => f()); clearTimeout(t); };
+            }, [tryN]);
+            return st;
+        }
+
+        // --- كارت بيانات الفرع: الخريطة على جنب والتفاصيل على الجنب التاني ---
+        function BranchInfo({ b, estimate }) {
+            const rows = [
+                b.address && [I.pin(), T('العنوان', 'Address'), b.address],
+                b.hours && [I.clock(), T('مواعيد العمل', 'Working hours'), b.hours],
+                b.waitTime && [I.wait(), T('مدة الانتظار المتوقعة', 'Expected waiting time'), b.waitTime],
+                [I.money(), T('التكلفة المتوقعة', 'Expected cost'), estimate || (b.consultFee ? T('الكشف: ', 'Consultation: ') + b.consultFee : T('بتتحدد بعد الكشف', 'Determined after examination'))],
+                b.phone && [I.phone(), T('تليفون الفرع', 'Branch phone'), <a href={'tel:' + b.phone} dir="ltr" className="underline">{b.phone}</a>]
+            ].filter(Boolean);
+            return (
+                <div className="grid md:grid-cols-2 gap-4 animate-fade-in">
+                    <div className="rounded-2xl overflow-hidden border border-gray-100 bg-gray-100 min-h-[220px] md:min-h-[260px] relative">
+                        <iframe title="map" src={mapSrc(b)} className="absolute inset-0 w-full h-full border-0" loading="lazy" referrerPolicy="no-referrer-when-downgrade" allowFullScreen></iframe>
+                    </div>
+                    <div className="bg-gray-50 rounded-2xl p-4 border border-gray-100 space-y-3">
+                        <p className="font-black text-gray-900">{T('فرع ', '')}{b.name}</p>
+                        {rows.map(([ic, l, v], i) => <div key={i} className="flex gap-2.5"><span className="text-gold-600 mt-0.5 shrink-0">{ic}</span><div className="min-w-0"><p className="text-[11px] font-bold text-gray-400">{l}</p><div className="text-sm font-bold text-gray-800 break-words">{v}</div></div></div>)}
+                        {b.mapsLink && <a href={b.mapsLink} target="_blank" rel="noreferrer" className="inline-block text-xs font-black text-blue-600">{T('افتح على جوجل مابس ↗', 'Open in Google Maps ↗')}</a>}
+                    </div>
+                </div>
+            );
+        }
+
+        // --- اختيار الفرع ---
+        function BranchPicker({ branches, value, onChange }) {
+            return <div className="flex flex-wrap gap-2">{branches.map(b => <button key={b.id} type="button" onClick={() => onChange(b.id)} className={`px-4 py-2.5 rounded-xl text-sm font-black border-2 transition-all ${value === b.id ? 'bg-gold-500 text-white border-gold-500 shadow-md' : 'bg-white text-gray-700 border-gray-200 hover:border-gold-400'}`}>{b.name}</button>)}</div>;
+        }
+
+        const Label = ({ n, children }) => <p className="text-sm font-black text-gray-800 mb-2 flex items-center gap-2">{n && <span className="w-6 h-6 rounded-full bg-gold-500 text-white text-xs flex items-center justify-center shrink-0">{n}</span>}{children}</p>;
+        const inp = "w-full bg-gray-50 border border-gray-200 p-3.5 rounded-2xl outline-none focus:border-gold-500 font-bold transition-colors";
+
+        // ===================== حجز موعد =====================
+        function BookForm({ pub: pubAll, initial, onDone, alert }) {
+            const editing = !!(initial && initial.id);
+            const [dept, setDept] = useState(() => {
+                if (QS.get('dept') === 'derma') return 'derma';
+                if (initial && initial.id) { const v = deptView(pubAll, 'derma'); if (v.hasDerma && ((initial.serviceIds || []).some(id => v.services.some(x => x.id === id)) || (initial.doctorId && v.doctors.some(d => d.id === initial.doctorId) && !deptView(pubAll, 'dental').doctors.some(d => d.id === initial.doctorId)))) return 'derma'; }
+                return 'dental';
+            });
+            const pub = useMemo(() => deptView(pubAll, dept), [pubAll, dept]);
+            const [f, setF] = useState(() => ({ name: '', phone: '', branchId: '', serviceIds: [], doctorId: '', date: '', time: '', ...(initial ? { name: initial.patientName, phone: initial.phone, branchId: initial.branchId, serviceIds: initial.serviceIds || [], doctorId: initial.doctorId || '', date: initial.date, time: initial.time } : {}) }));
+            const [daySlots, setDaySlots] = useState([]);
+            const [busy, setBusy] = useState(false);
+            const presetDone = useRef(false);
+            // حجز قديم من غير serviceIds: نطابق الخدمات بالاسم
+            useEffect(() => {
+                if (!editing || (initial.serviceIds || []).length || !initial.service || !pub.services.length || f.serviceIds.length) return;
+                const names = initial.service.split(/[،,]/).map(x => x.trim());
+                const ids = pub.services.filter(x => names.includes(x.name)).map(x => x.id);
+                if (ids.length) set({ serviceIds: ids });
+            }, [pub.services]);
+            const set = p => setF(x => ({ ...x, ...p }));
+            const switchDept = d => { if (d === dept) return; setDept(d); const v = deptView(pubAll, d); setF(x => ({ ...x, serviceIds: [], doctorId: '', time: '', branchId: v.branches.some(b => b.id === x.branchId) ? x.branchId : (v.branches.length === 1 ? v.branches[0].id : '') })); };
+            // الجلدية في فرع واحد: نختاره لوحده
+            useEffect(() => { if (dept === 'derma' && !f.branchId && pub.branches.length === 1) set({ branchId: pub.branches[0].id }); }, [dept, pub.branches.length]);
+            // خدمة جاية من صفحة خدمة في الموقع
+            useEffect(() => {
+                const want = (QS.get('service') || '').trim();
+                if (presetDone.current || !want || !pub.services.length || editing) return;
+                presetDone.current = true;
+                const s = pub.services.find(x => x.name === want) || pub.services.find(x => want.includes(x.name) || x.name.includes(want));
+                if (s) set({ serviceIds: [s.id] });
+            }, [pub.services]);
+            useEffect(() => {
+                if (!f.date) { setDaySlots([]); return; }
+                return db.collection('booked_slots').where('date', '==', f.date).onSnapshot(s => setDaySlots(s.docs.map(d => d.data())), e => console.error(e));
+            }, [f.date]);
+            const branch = pub.branches.find(b => b.id === f.branchId);
+            const chosen = pub.services.filter(s => f.serviceIds.includes(s.id));
+            const specIds = [...new Set(chosen.map(s => s.specialtyId).filter(Boolean))];
+            const branchDocs = pub.doctors.filter(d => Array.isArray(d.branchIds) && d.branchIds.includes(f.branchId));
+            const scored = branchDocs.map(d => ({ d, n: specIds.filter(id => (d.specs || []).includes(id)).length })).sort((a, b) => b.n - a.n || (a.d.name || '').localeCompare(b.d.name || '', 'ar'));
+            const matched = specIds.length ? scored.filter(x => x.n > 0) : scored;
+            const suggest = matched.length ? matched : scored;
+            const specName = id => (pub.specialties.find(s => s.id === id) || {}).name;
+            const doc = pub.doctors.find(d => d.id === f.doctorId);
+            const off = !!(f.doctorId && f.date && !doctorWorks(doc, f.branchId, f.date));
+            const own = editing && initial.branchId === f.branchId && (initial.doctorId || '') === f.doctorId && initial.date === f.date ? initial.time : null;
+            const booked = new Set(daySlots.filter(x => x.branchId === f.branchId && (x.doctorId || '') === f.doctorId && x.time !== own).map(x => x.time));
+            const today = localDay(), now = new Date();
+            const slots = (!f.doctorId || !f.date || off) ? [] : SLOTS.filter(v => { if (booked.has(v)) return false; if (f.date === today) { const [h, m] = v.split(':').map(Number); if (h * 60 + m <= now.getHours() * 60 + now.getMinutes() && v !== own) return false; } return true; });
+            const lo = chosen.reduce((t, s) => t + num(s.priceFrom), 0), hi = chosen.reduce((t, s) => t + (num(s.priceTo) || num(s.priceFrom)), 0);
+            const estimate = chosen.length ? (lo || hi ? (hi > lo ? num(lo).toLocaleString('en-US') + ' – ' + money(hi) : money(lo)) : T('حسب الحالة', 'Varies')) : '';
+            const toggleSvc = id => set({ serviceIds: f.serviceIds.includes(id) ? f.serviceIds.filter(x => x !== id) : [...f.serviceIds, id], doctorId: '', time: '' });
+            useEffect(() => { if (f.time && !slots.includes(f.time)) set({ time: '' }); }, [daySlots, f.doctorId, f.date, off]);
+
+            const submit = async e => {
+                e.preventDefault();
+                if (!f.branchId) return alert('error', T('اختار الفرع', 'Choose a branch'));
+                if (!f.doctorId) return alert('error', T('اختار الدكتور', 'Choose a doctor'));
+                if (off) return alert('error', T('الدكتور مش متاح في اليوم ده', 'Doctor not available that day'));
+                if (!f.time) return alert('error', T('اختار الوقت', 'Choose a time'));
+                if (!lockSend()) return; setBusy(true);
+                const base = { patientName: f.name.trim(), phone: f.phone.trim(), branchId: f.branchId, doctorId: f.doctorId, doctorName: (doc && doc.name) || '', service: (chosen.map(s => s.name).join('، ') || T('كشف', 'Checkup')).slice(0, 200), serviceIds: f.serviceIds.slice(0, 20), estimate: (estimate || (branch && branch.consultFee ? T('الكشف: ', 'Consultation: ') + branch.consultFee : '')).slice(0, 80), date: f.date, time: f.time };
+                const sid = slotId(base.branchId, base.doctorId, base.date, base.time);
+                try {
+                    if (editing) {
+                        const oldSid = slotId(initial.branchId, initial.doctorId, initial.date, initial.time);
+                        const appRef = db.collection('appointments').doc(initial.id);
+                        const ch = (base.date !== initial.date || base.time !== initial.time || base.doctorId !== (initial.doctorId || '')) ? { rescheduledAt: new Date().toISOString(), rescheduledBy: 'patient', prevDate: initial.date || '', prevTime: initial.time || '', prevDoctorId: initial.doctorId || '', prevDoctorName: initial.doctorName || '' } : {};
+                        await db.runTransaction(async tx => {
+                            const cur = await tx.get(appRef); if (!cur.exists) throw new Error('GONE');
+                            if (sid !== oldSid) { const sRef = db.collection('booked_slots').doc(sid); if ((await tx.get(sRef)).exists) throw new Error('SLOT_TAKEN'); tx.set(sRef, { branchId: base.branchId, doctorId: base.doctorId, date: base.date, time: base.time, at: Date.now(), appId: initial.id }); }
+                            tx.update(appRef, { ...base, ...ch });
+                        });
+                        onDone({ ...initial, ...base, branch });
+                    } else {
+                        const sRef = db.collection('booked_slots').doc(sid);
+                        let res = null;
+                        for (let i = 0; i < 5 && !res; i++) {
+                            const code = newCode(), appRef = db.collection('appointments').doc(), bRef = db.collection('online_bookings').doc(code);
+                            try {
+                                await db.runTransaction(async tx => {
+                                    const [bs, ss] = await Promise.all([tx.get(bRef), tx.get(sRef)]);
+                                    if (ss.exists) throw new Error('SLOT_TAKEN'); if (bs.exists) throw new Error('CODE_TAKEN');
+                                    tx.set(appRef, { ...base, bookingCode: code, source: 'online', status: 'unconfirmed', createdAt: new Date().toISOString() });
+                                    tx.set(bRef, { appointmentId: appRef.id });
+                                    tx.set(sRef, { branchId: base.branchId, doctorId: base.doctorId, date: base.date, time: base.time, at: Date.now(), appId: appRef.id });
+                                });
+                                res = { id: appRef.id, ...base, bookingCode: code };
+                            } catch (err) { if (err.message !== 'CODE_TAKEN') throw err; }
+                        }
+                        if (!res) throw new Error('CODE_TAKEN');
+                        onDone({ ...res, branch });
+                    }
+                } catch (err) {
+                    console.error(err);
+                    if (err.message === 'SLOT_TAKEN') { set({ time: '' }); alert('error', T('الموعد ده اتحجز حالاً، اختار وقت تاني', 'This slot was just booked, pick another')); }
+                    else if (err.message === 'GONE') alert('error', T('الحجز ده مبقاش موجود', 'This booking no longer exists'));
+                    else alert('error', T('حصل خطأ، اتأكد من النت وجرب تاني', 'Something went wrong, check your connection'));
+                }
+                setBusy(false); unlockSend();
+            };
+
+            return (
+                <form onSubmit={submit} className="space-y-6">
+                    {pub.hasDerma && <div className="grid grid-cols-2 gap-2">
+                        {[['dental', '🦷', T('أسنان', 'Dental')], ['derma', '✨', T('جلدية وتجميل', 'Dermatology')]].map(([k, ic, l]) => <button key={k} type="button" onClick={() => switchDept(k)} className={`p-3 rounded-2xl border-2 font-black text-sm transition-all ${dept === k ? 'bg-gold-50 border-gold-500 text-gray-900' : 'bg-white border-gray-200 text-gray-500 hover:border-gold-300'}`}>{ic} {l}</button>)}
+                        {dept === 'derma' && <p className="col-span-2 text-[11px] font-bold text-gold-700 bg-gold-50 rounded-xl px-3 py-2">{T('الجلدية متاحة في: ', 'Dermatology is available at: ')}{pub.dermaBranches.map(b => b.name).join('، ')}</p>}
+                    </div>}
+                    <div><Label n="1">{T('اختار الفرع', 'Choose a branch')}</Label><BranchPicker branches={pub.branches} value={f.branchId} onChange={id => set({ branchId: id, doctorId: '', time: '' })} /></div>
+                    {branch && <BranchInfo b={branch} estimate={estimate ? estimate + T(' (تقريبي)', ' (approx.)') : ''} />}
+
+                    {branch && pub.services.length > 0 && <div className="animate-fade-in">
+                        <Label n="2">{T('محتاج إيه؟ (اختياري — تقدر تختار أكتر من خدمة)', 'What do you need? (optional — pick one or more)')}</Label>
+                        <div className="space-y-3">{[...pub.specialties, { id: '', name: T('خدمات تانية', 'Other services') }].map(sp => { const list = pub.services.filter(s => (s.specialtyId || '') === sp.id || (sp.id === '' && !pub.specialties.some(x => x.id === s.specialtyId))); if (!list.length) return null; return (
+                            <div key={sp.id || 'o'}><p className="text-[11px] font-black text-gray-400 mb-1.5">{sp.name}</p>
+                                <div className="flex flex-wrap gap-2">{list.map(s => { const on = f.serviceIds.includes(s.id); return (
+                                    <button key={s.id} type="button" onClick={() => toggleSvc(s.id)} title={s.note || ''} className={`text-right px-3 py-2 rounded-xl border-2 transition-all ${on ? 'bg-gold-50 border-gold-500' : 'bg-white border-gray-200 hover:border-gold-300'}`}>
+                                        <span className="block text-xs font-black text-gray-800">{on ? '✓ ' : ''}{s.name}</span>
+                                        <span className="block text-[10px] font-bold text-gold-700">{priceText(s)}{s.duration ? ' • ' + s.duration : ''}</span>
+                                    </button>); })}</div></div>); })}</div>
+                        {estimate && <div className="mt-3 bg-gold-50 border border-gold-200 rounded-2xl p-3 flex items-center justify-between gap-2"><span className="text-sm font-black text-gray-800">{T('التكلفة المتوقعة', 'Expected cost')}</span><span className="text-base font-black text-gold-700">{estimate}</span></div>}
+                        {estimate && <p className="text-[10px] font-bold text-gray-400 mt-1">{T('السعر تقريبي وبيتحدد نهائياً بعد الكشف.', 'Approximate — final price is set after examination.')}</p>}
+                    </div>}
+
+                    {branch && <div className="animate-fade-in">
+                        <Label n={pub.services.length ? '3' : '2'}>{T('اختار الدكتور', 'Choose your doctor')}</Label>
+                        {specIds.length > 0 && !matched.length && <p className="text-xs font-bold text-amber-700 bg-amber-50 rounded-xl p-2.5 mb-2">{T('مفيش دكتور متحدد للخدمة دي في الفرع ده — تقدر تختار من دكاترة الفرع.', 'No doctor is set for this service here — choose any doctor in this branch.')}</p>}
+                        {suggest.length === 0 ? <p className="text-sm font-bold text-gray-500">{T('مفيش دكاترة متاحين في الفرع ده حالياً.', 'No doctors available in this branch right now.')}</p> :
+                        <div className="grid sm:grid-cols-2 gap-2">{suggest.map(({ d, n }) => { const on = f.doctorId === d.id; return (
+                            <button key={d.id} type="button" onClick={() => set({ doctorId: d.id, time: '' })} className={`text-right p-3 rounded-2xl border-2 transition-all ${on ? 'bg-gold-50 border-gold-500' : 'bg-white border-gray-200 hover:border-gold-300'}`}>
+                                <span className="flex items-center gap-2"><span className="w-9 h-9 rounded-full bg-gold-100 text-gold-700 font-black flex items-center justify-center shrink-0">{(d.name || '?').trim().charAt(0)}</span>
+                                    <span className="min-w-0"><span className="block text-sm font-black text-gray-800 truncate">{T('د. ', 'Dr. ')}{d.name}</span>
+                                        <span className="block text-[10px] font-bold text-gray-400 truncate">{(d.specs || []).map(specName).filter(Boolean).join('، ') || (dept === 'derma' ? T('جلدية', 'Dermatology') : T('طب أسنان عام', 'General dentistry'))}</span></span>
+                                    {specIds.length > 0 && n > 0 && <span className="mr-auto text-[9px] font-black text-emerald-700 bg-emerald-50 rounded-md px-1.5 py-0.5 shrink-0">{T('مناسب للخدمة', 'Fits')}</span>}</span>
+                            </button>); })}</div>}
+                    </div>}
+
+                    {f.doctorId && <div className="animate-fade-in">
+                        <Label n={pub.services.length ? '4' : '3'}>{T('اليوم والوقت', 'Date & time')}</Label>
+                        <input type="date" required value={f.date} min={today} onChange={e => set({ date: e.target.value, time: '' })} className={inp + ' mb-3'} />
+                        {f.date && (off ? <p className="text-sm font-bold text-red-600 bg-red-50 p-3 rounded-xl text-center">{T('الدكتور غير متاح في اليوم ده — اختار يوم تاني أو دكتور تاني.', 'The doctor is not available on this day — pick another day or doctor.')}</p>
+                            : slots.length ? <div className="grid grid-cols-3 sm:grid-cols-5 gap-2" dir="ltr">{slots.map(v => <button key={v} type="button" onClick={() => set({ time: v })} className={`py-2.5 rounded-xl text-xs font-black border-2 transition-all ${f.time === v ? 'bg-gold-500 text-white border-gold-500 shadow' : 'bg-white text-gray-600 border-gray-100 hover:border-gold-300'}`}>{fmtTime(v)}</button>)}</div>
+                            : <p className="text-sm font-bold text-red-500 bg-red-50 p-3 rounded-xl text-center">{T('مفيش مواعيد متاحة في اليوم ده.', 'No available times on this day.')}</p>)}
+                    </div>}
+
+                    {f.time && <div className="animate-fade-in space-y-3">
+                        <Label n={pub.services.length ? '5' : '4'}>{T('بياناتك', 'Your details')}</Label>
+                        <input required maxLength={100} value={f.name} onChange={e => set({ name: e.target.value })} placeholder={T('الاسم بالكامل', 'Full name')} className={inp} />
+                        <input required type="tel" maxLength={30} value={f.phone} onChange={e => set({ phone: e.target.value })} placeholder="01xxxxxxxxx" dir="ltr" className={inp + ' text-left'} />
+                        <button disabled={busy} className="w-full bg-gradient-to-r from-gold-600 to-gold-400 text-white font-black py-4 rounded-2xl shadow-lg text-lg disabled:opacity-60">{busy ? '...' : editing ? T('حفظ التعديل', 'Save changes') : T('تأكيد الحجز', 'Confirm booking')}</button>
+                    </div>}
+                </form>
+            );
+        }
+
+        // ===================== استشارة أونلاين =====================
+        function ConsultForm({ pub, onDone, alert }) {
+            const [f, setF] = useState({ name: '', phone: '', branchId: '', specId: '', doctorId: '', question: '' });
+            const [busy, setBusy] = useState(false);
+            const set = p => setF(x => ({ ...x, ...p }));
+            const docs = pub.doctors.filter(d => (!f.branchId || (d.branchIds || []).includes(f.branchId)) && (!f.specId || (d.specs || []).includes(f.specId)));
+            const spec = pub.specialties.find(s => s.id === f.specId);
+            const submit = async e => {
+                e.preventDefault();
+                if (!f.question.trim()) return alert('error', T('اكتب سؤالك', 'Write your question'));
+                if (!lockSend()) return; setBusy(true);
+                const d = pub.doctors.find(x => x.id === f.doctorId);
+                const targets = d ? [d.id] : docs.slice(0, 30).map(x => x.id);
+                const data = { name: f.name.trim(), phone: f.phone.trim(), branchId: f.branchId, topic: spec ? spec.name : T('عام', 'General'), doctorId: d ? d.id : '', doctorName: d ? d.name : '', targets, question: f.question.trim(), status: 'new', createdAt: new Date().toISOString() };
+                try {
+                    let code = null;
+                    for (let i = 0; i < 5 && !code; i++) {
+                        const c = newCode(8), ref = db.collection('consults').doc(c);
+                        try { await db.runTransaction(async tx => { if ((await tx.get(ref)).exists) throw new Error('TAKEN'); tx.set(ref, data); }); code = c; }
+                        catch (err) { if (err.message !== 'TAKEN') throw err; }
+                    }
+                    if (!code) throw new Error('TAKEN');
+                    onDone({ code, ...data });
+                } catch (err) { console.error(err); alert('error', T('حصل خطأ، اتأكد من النت وجرب تاني', 'Something went wrong, check your connection')); }
+                setBusy(false); unlockSend();
+            };
+            return (
+                <form onSubmit={submit} className="space-y-6">
+                    <p className="text-sm font-bold text-gray-500 leading-relaxed">{T('ابعت سؤالك لدكاترتنا مجاناً، والدكتور هيرد عليك في أقرب وقت. تقدر تتابع الرد بالكود اللي هيظهرلك.', 'Send your question to our doctors for free. Track the reply with the code you will get.')}</p>
+                    <div><Label n="1">{T('الموضوع', 'Topic')}</Label>
+                        <div className="flex flex-wrap gap-2">{[{ id: '', name: T('عام / مش متأكد', 'General / not sure') }, ...pub.specialties].map(s => <button key={s.id || 'g'} type="button" onClick={() => set({ specId: s.id, doctorId: '' })} className={`px-3.5 py-2 rounded-xl text-xs font-black border-2 ${f.specId === s.id ? 'bg-gold-500 text-white border-gold-500' : 'bg-white text-gray-700 border-gray-200'}`}>{s.name}</button>)}</div></div>
+                    {pub.branches.length > 1 && <div><Label n="2">{T('الفرع الأقرب ليك (اختياري)', 'Nearest branch (optional)')}</Label>
+                        <div className="flex flex-wrap gap-2"><button type="button" onClick={() => set({ branchId: '', doctorId: '' })} className={`px-4 py-2.5 rounded-xl text-sm font-black border-2 ${!f.branchId ? 'bg-gold-500 text-white border-gold-500' : 'bg-white text-gray-700 border-gray-200'}`}>{T('أي فرع', 'Any')}</button>
+                            {pub.branches.map(b => <button key={b.id} type="button" onClick={() => set({ branchId: b.id, doctorId: '' })} className={`px-4 py-2.5 rounded-xl text-sm font-black border-2 ${f.branchId === b.id ? 'bg-gold-500 text-white border-gold-500' : 'bg-white text-gray-700 border-gray-200'}`}>{b.name}</button>)}</div></div>}
+                    <div><Label n={pub.branches.length > 1 ? '3' : '2'}>{T('عايز تسأل دكتور معين؟', 'Ask a specific doctor?')}</Label>
+                        <div className="grid sm:grid-cols-2 gap-2">
+                            <button type="button" onClick={() => set({ doctorId: '' })} className={`text-right p-3 rounded-2xl border-2 text-sm font-black ${!f.doctorId ? 'bg-gold-50 border-gold-500' : 'bg-white border-gray-200'}`}>{T('أي دكتور مناسب', 'Any suitable doctor')}{docs.length ? <span className="block text-[10px] font-bold text-gray-400">{T('هيوصل لـ ', 'Goes to ')}{docs.length}{T(' دكتور', ' doctors')}</span> : null}</button>
+                            {docs.map(d => <button key={d.id} type="button" onClick={() => set({ doctorId: d.id })} className={`text-right p-3 rounded-2xl border-2 text-sm font-black ${f.doctorId === d.id ? 'bg-gold-50 border-gold-500' : 'bg-white border-gray-200'}`}>{T('د. ', 'Dr. ')}{d.name}</button>)}
+                        </div></div>
+                    <div className="space-y-3"><Label n={pub.branches.length > 1 ? '4' : '3'}>{T('سؤالك', 'Your question')}</Label>
+                        <textarea required rows="5" maxLength={2000} value={f.question} onChange={e => set({ question: e.target.value })} placeholder={T('اشرح المشكلة: فين بالظبط، من إمتى، فيه ألم ولا لأ...', 'Describe the issue: where, since when, any pain...')} className={inp} />
+                        <input required maxLength={100} value={f.name} onChange={e => set({ name: e.target.value })} placeholder={T('الاسم', 'Name')} className={inp} />
+                        <input required type="tel" maxLength={30} value={f.phone} onChange={e => set({ phone: e.target.value })} placeholder={T('رقم الموبايل (واتساب)', 'Mobile (WhatsApp)')} dir="ltr" className={inp + ' text-left'} />
+                        <button disabled={busy} className="w-full bg-gradient-to-r from-gold-600 to-gold-400 text-white font-black py-4 rounded-2xl shadow-lg text-lg disabled:opacity-60">{busy ? '...' : T('ابعت الاستشارة', 'Send question')}</button>
+                    </div>
+                </form>
+            );
+        }
+
+        // ===================== متابعة بالكود =====================
+        function Track({ pub, alert, onEdit, initialCode }) {
+            const [code, setCode] = useState(initialCode || '');
+            const [res, setRes] = useState(null);
+            const [busy, setBusy] = useState(false);
+            const [err, setErr] = useState('');
+            const look = async (e, c0) => {
+                e && e.preventDefault(); setErr('');
+                const c = (c0 || code).toUpperCase().trim();
+                if (!/^[A-Z0-9]{3,12}$/.test(c)) { setErr(T('الكود غلط', 'Invalid code')); return; }
+                setBusy(true);
+                try {
+                    const bk = await db.collection('online_bookings').doc(c).get();
+                    if (bk.exists) {
+                        const ap = await db.collection('appointments').doc(bk.data().appointmentId).get();
+                        if (!ap.exists) setErr(T('مفيش حجز بالكود ده', 'No booking with this code'));
+                        else setRes({ type: 'booking', id: ap.id, ...ap.data() });
+                    } else {
+                        const cs = await db.collection('consults').doc(c).get();
+                        if (cs.exists) setRes({ type: 'consult', id: cs.id, ...cs.data() });
+                        else setErr(T('مفيش حجز ولا استشارة بالكود ده', 'Nothing found with this code'));
+                    }
+                } catch (x) { console.error(x); setErr(T('حصل خطأ في البحث', 'Search error')); }
+                setBusy(false);
+            };
+            useEffect(() => { if (initialCode) look(null, initialCode); }, []);
+            const cancel = async () => {
+                if (!confirm(T('إلغاء الموعد نهائياً؟', 'Cancel this appointment?'))) return;
+                setBusy(true);
+                try { await db.collection('appointments').doc(res.id).update({ status: 'canceled', canceledAt: new Date().toISOString(), canceledBy: 'patient' }); setRes({ ...res, status: 'canceled' }); alert('success', T('اتلغى الموعد', 'Appointment canceled')); }
+                catch (x) { console.error(x); alert('error', T('حصل خطأ في الإلغاء', 'Cancel failed')); }
+                setBusy(false);
+            };
+            const b = res && pub.branches.find(x => x.id === res.branchId);
+            return (
+                <div className="space-y-5">
+                    <form onSubmit={look} className="flex gap-2"><input value={code} onChange={e => setCode(e.target.value)} placeholder={T('اكتب الكود', 'Enter your code')} dir="ltr" className={inp + ' text-center font-mono tracking-widest uppercase'} /><button disabled={busy} className="bg-gray-900 text-white px-6 rounded-2xl font-black shrink-0">{busy ? '...' : T('بحث', 'Search')}</button></form>
+                    {err && <p className="text-sm font-bold text-red-500 text-center">{err}</p>}
+                    {res && res.type === 'booking' && <div className="bg-gray-50 rounded-2xl p-5 border border-gray-100 space-y-2 animate-fade-in">
+                        <p className="font-black text-gray-900 text-lg">{res.patientName}</p>
+                        <p className="text-sm font-bold text-gray-700">📅 {res.date} • {fmtTime(res.time)}</p>
+                        <p className="text-sm font-bold text-gray-700">{T('د. ', 'Dr. ')}{res.doctorName}{b ? T(' • فرع ', ' • ') + b.name : ''}</p>
+                        {res.service && <p className="text-sm font-bold text-gray-500">{res.service}</p>}
+                        {res.estimate && <p className="text-sm font-black text-gold-700">{T('التكلفة المتوقعة: ', 'Expected cost: ')}{res.estimate}</p>}
+                        {res.status === 'canceled' ? <p className="text-sm font-black text-red-600">{T('الحجز ده ملغي.', 'This booking is canceled.')}</p> :
+                            <div className="flex gap-2 pt-2"><button type="button" onClick={() => onEdit(res)} className="flex-1 bg-gold-500 text-white py-3 rounded-xl font-black">{T('تعديل الموعد', 'Change')}</button><button type="button" disabled={busy} onClick={cancel} className="px-5 bg-red-50 text-red-600 border border-red-100 py-3 rounded-xl font-black">{T('إلغاء', 'Cancel')}</button></div>}
+                    </div>}
+                    {res && res.type === 'consult' && <div className="space-y-3 animate-fade-in">
+                        <div className="bg-gray-50 rounded-2xl p-4 border border-gray-100"><p className="text-[11px] font-black text-gray-400 mb-1">{T('سؤالك', 'Your question')} • {res.topic}</p><p className="text-sm font-bold text-gray-800 whitespace-pre-line">{res.question}</p></div>
+                        {(res.replies || []).length ? res.replies.map((r, i) => <div key={i} className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4"><p className="text-[11px] font-black text-emerald-700 mb-1">{T('رد ', 'Reply from ')}{r.by}</p><p className="text-sm font-bold text-gray-800 whitespace-pre-line">{r.text}</p></div>)
+                            : <p className="text-sm font-bold text-amber-700 bg-amber-50 rounded-2xl p-4 text-center">{T('لسه مفيش رد — الدكتور هيرد عليك قريب. ارجع شوف بنفس الكود.', 'No reply yet — check back soon with the same code.')}</p>}
+                    </div>}
+                </div>
+            );
+        }
+
+        // ===================== الصفحة =====================
+        function App() {
+            const pub = usePublicData();
+            const [tab, setTab] = useState(['book', 'consult', 'track'].includes(QS.get('tab')) ? QS.get('tab') : 'book');
+            const [done, setDone] = useState(null);
+            const [editApp, setEditApp] = useState(null);
+            const [msg, setMsg] = useState(null);
+            const alert = (type, text) => setMsg({ type, text });
+            // جوه الموقع: نبلّغ الصفحة الأم بطول المحتوى عشان الإطار يكبر ويصغر لوحده
+            useEffect(() => {
+                if (!EMBED || !window.parent || window.parent === window) return;
+                const send = () => window.parent.postMessage({ type: 'ne-booking-height', h: document.documentElement.scrollHeight }, '*');
+                const ro = new ResizeObserver(send); ro.observe(document.body); send();
+                const onMsg = e => { if (e.data && e.data.type === 'ne-booking-tab' && ['book', 'consult', 'track'].includes(e.data.tab)) { setTab(e.data.tab); setDone(null); setEditApp(null); } };
+                window.addEventListener('message', onMsg);
+                return () => { ro.disconnect(); window.removeEventListener('message', onMsg); };
+            }, []);
+            const go = t => { setTab(t); setDone(null); setEditApp(null); };
+            const TABS = [['book', T('حجز موعد', 'Book')], ['consult', T('استشارة أونلاين مجانية', 'Free online consultation')], ['track', T('متابعة بالكود', 'Track by code')]];
+            return (
+                <div className={EMBED ? 'p-1' : 'min-h-screen pb-12 px-4'}>
+                    {!EMBED && <div className="text-center pt-8 mb-6"><img src="https://i.ibb.co/qLw7Tcqv/logo-Dr-shahenda-original.png" alt="New Era" className="mx-auto h-20 mb-3" /><h1 className="text-2xl font-black text-gray-800">NEW ERA DENTAL CENTER</h1></div>}
+                    <div className={`w-full ${EMBED ? '' : 'max-w-3xl mx-auto'} bg-white rounded-[32px] shadow-[0_15px_50px_rgb(0,0,0,0.07)] border border-gray-100 p-5 sm:p-8`}>
+                        <div className="flex bg-gray-100 p-1 rounded-2xl mb-6 overflow-x-auto">{TABS.map(([k, n]) => <button key={k} type="button" onClick={() => go(k)} className={`flex-1 px-3 py-2.5 rounded-xl text-xs sm:text-sm font-black whitespace-nowrap transition-all ${tab === k ? 'bg-white shadow text-gold-600' : 'text-gray-500'}`}>{n}</button>)}</div>
+                        {pub.status !== 'ok' && !pub.branches.length ? <p className={`text-center font-bold p-6 ${pub.status === 'loading' ? 'text-gray-400 animate-pulse' : 'text-gray-500'}`}>{pub.status === 'loading' ? T('جاري التحميل...', 'Loading...') : T('مش قادرين نوصل دلوقتي، بنحاول تاني...', 'Can\'t connect right now, retrying...')}</p>
+                        : done ? <Done d={done} onBack={() => go(done.type === 'consult' ? 'consult' : 'book')} />
+                        : tab === 'book' ? (editApp ? <><p className="text-sm font-black text-gold-700 mb-4">{T('تعديل الحجز ', 'Editing ')}#{editApp.bookingCode}</p><BookForm key={'e' + editApp.id} pub={pub} initial={editApp} alert={alert} onDone={d => setDone({ type: 'booking', edited: true, ...d })} /></>
+                            : <BookForm key="new" pub={pub} alert={alert} onDone={d => setDone({ type: 'booking', ...d })} />)
+                        : tab === 'consult' ? <ConsultForm pub={pub} alert={alert} onDone={d => setDone({ type: 'consult', ...d })} />
+                        : <Track pub={pub} alert={alert} initialCode={QS.get('code') || ''} onEdit={a => { setEditApp(a); setTab('book'); }} />}
+                    </div>
+                    <p className="text-center text-[10px] font-bold text-gray-300 mt-3" dir="ltr">v{BOOKING_VERSION}</p>
+                    {msg && <div className="fixed inset-0 bg-gray-900/50 z-50 flex items-center justify-center p-4" onClick={() => setMsg(null)}>
+                        <div className="bg-white rounded-3xl p-6 max-w-sm w-full text-center animate-scale-in" onClick={e => e.stopPropagation()}>
+                            <p className={`font-black text-lg mb-4 ${msg.type === 'error' ? 'text-red-600' : 'text-emerald-600'}`}>{msg.text}</p>
+                            <button type="button" onClick={() => setMsg(null)} className="w-full bg-gray-900 text-white py-3 rounded-2xl font-black">{T('تمام', 'OK')}</button>
+                        </div></div>}
+                </div>
+            );
+        }
+
+        function Done({ d, onBack }) {
+            const consult = d.type === 'consult';
+            const code = consult ? d.code : d.bookingCode;
+            return (
+                <div className="text-center space-y-5 animate-slide-up">
+                    <div className="text-emerald-500 flex justify-center">{I.check(56)}</div>
+                    <h2 className="text-2xl font-black text-gray-800">{consult ? T('استشارتك اتبعتت!', 'Question sent!') : d.edited ? T('اتعدل الحجز!', 'Booking updated!') : T('تم الحجز بنجاح!', 'Booked successfully!')}</h2>
+                    {!consult && <div className="bg-gray-50 rounded-2xl p-5 text-right space-y-1.5 border border-gray-100">
+                        <p className="font-black text-gray-900">{d.patientName}</p>
+                        <p className="text-sm font-bold text-gray-700">📅 {d.date} • {fmtTime(d.time)}</p>
+                        <p className="text-sm font-bold text-gray-700">{T('د. ', 'Dr. ')}{d.doctorName}{d.branch ? T(' • فرع ', ' • ') + d.branch.name : ''}</p>
+                        {d.service && <p className="text-sm font-bold text-gray-500">{d.service}</p>}
+                        {d.estimate && <p className="text-sm font-black text-gold-700">{T('التكلفة المتوقعة: ', 'Expected cost: ')}{d.estimate}</p>}
+                        {d.branch && d.branch.address && <p className="text-xs font-bold text-gray-500">📍 {d.branch.address}</p>}
+                    </div>}
+                    {consult && <p className="text-sm font-bold text-gray-500">{T('الدكتور هيرد عليك في أقرب وقت. تابع الرد من تبويب "متابعة بالكود".', 'A doctor will reply soon. Check the reply from the "Track by code" tab.')}</p>}
+                    <div className="bg-gold-50 border-2 border-dashed border-gold-400 rounded-2xl p-5">
+                        <p className="text-xs font-black text-gold-700 mb-1">{consult ? T('كود الاستشارة', 'Your consultation code') : T('كود الحجز', 'Your booking code')}</p>
+                        <p className="text-3xl font-black font-mono tracking-[0.25em] text-gray-900" dir="ltr">{code}</p>
+                        <p className="text-[11px] font-bold text-gray-500 mt-2">{consult ? T('احتفظ بيه عشان تشوف رد الدكتور.', 'Keep it to see the doctor\'s reply.') : T('احتفظ بيه عشان تعدّل أو تلغي الموعد.', 'Keep it to change or cancel.')}</p>
+                    </div>
+                    <button type="button" onClick={onBack} className="w-full bg-gray-900 text-white py-3.5 rounded-2xl font-black">{T('رجوع', 'Back')}</button>
+                </div>
+            );
+        }
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
