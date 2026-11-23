@@ -13,18 +13,31 @@
         const db = firebase.firestore();
         // اتصال Firestore بطريقة long polling: الاتصال المباشر (WebChannel) بيرجع 503 عند بعض شبكات النت فالصفحة تفتكر نفسها offline والحجز يفشل
         db.settings({ experimentalForceLongPolling: true, experimentalAutoDetectLongPolling: false, merge: true }); // الاتنين مع بعض بيوقّعوا الصفحة
-        const BOOKING_VERSION = '2.6';
+        const BOOKING_VERSION = '2.7';
         // ===== بيكسل فيسبوك (نفس الكود المتسجل في لوحة الموقع: settings/site → seo.pixel) =====
         // بيسجل PageView لكل زيارة، و Lead لكل حجز جديد (eventID = كود الحجز عشان يتطابق بعدين مع Conversions API)
         // ملحوظة: ممنوع نبعت اسم الخدمة أو التخصص لفيسبوك (بيعتبرها بيانات صحية وممكن يقيّد البيكسل) — الفرع بس.
         const neTrack = (name, params, eventID) => { try { if (window.fbq) window.fbq('track', name, params || {}, eventID ? { eventID } : undefined); } catch (e) { } };
         // نفس الحجز من السيرفر (Conversions API) بنفس الكود، عشان اللي البيكسل بيتوهه يتحسب
+        const neGoogle = code => { try { if (!window.gtag) return; window.gtag('event', 'generate_lead', { method: 'booking_page' }); if (window.__neAdsBook) window.gtag('event', 'conversion', { send_to: window.__neAdsBook, transaction_id: code }); } catch (e) { } };
         const ck = n => (document.cookie.match('(?:^|; )' + n + '=([^;]*)') || [])[1] || '';
         const neCapi = (code, phone) => { try { fetch('/api/capi', { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, phone, url: location.href, fbp: ck('_fbp'), fbc: ck('_fbc') }) }).catch(() => { }); } catch (e) { } };
         (() => {
             try {
                 db.collection('settings').doc('site').get().then(d => {
-                    const px = String(((d.exists && d.data().seo) || {}).pixel || '').trim();
+                    const se = (d.exists && d.data().seo) || {};
+                    // جوجل: Analytics + تحويل الحجز في Google Ads (نفس الأكواد اللي في لوحة الموقع)
+                    try {
+                        const ga = String(se.ga4 || '').trim().toUpperCase(), aw = String(se.adsBook || '').trim();
+                        const gaOk = /^G-[A-Z0-9]{4,}$/.test(ga), awOk = /^AW-\d{6,}\/[\w-]{4,}$/i.test(aw);
+                        if ((gaOk || awOk) && !window.gtag) {
+                            window.dataLayer = window.dataLayer || []; window.gtag = function () { window.dataLayer.push(arguments); };
+                            const sc = document.createElement('script'); sc.async = true; sc.src = 'https://www.googletagmanager.com/gtag/js?id=' + (gaOk ? ga : aw.split('/')[0]); document.head.appendChild(sc);
+                            window.gtag('js', new Date()); if (gaOk) window.gtag('config', ga); if (awOk) window.gtag('config', aw.split('/')[0]);
+                            window.__neAdsBook = awOk ? aw : '';
+                        }
+                    } catch (e) { }
+                    const px = String(se.pixel || '').trim();
                     if (!/^\d{8,20}$/.test(px) || window.fbq) return;
                     !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');
                     window.fbq('init', px); window.fbq('track', 'PageView');
@@ -283,7 +296,7 @@
                             } catch (err) { if (err.message !== 'CODE_TAKEN') throw err; }
                         }
                         if (!res) throw new Error('CODE_TAKEN');
-                        neTrack('Lead', { branch: (branch && branch.name) || '' }, res.bookingCode); neCapi(res.bookingCode, base.phone);
+                        neTrack('Lead', { branch: (branch && branch.name) || '' }, res.bookingCode); neCapi(res.bookingCode, base.phone); neGoogle(res.bookingCode);
                         onDone({ ...res, branch });
                     }
                 } catch (err) {
