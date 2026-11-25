@@ -13,7 +13,7 @@
         const db = firebase.firestore();
         // اتصال Firestore بطريقة long polling: الاتصال المباشر (WebChannel) بيرجع 503 عند بعض شبكات النت فالصفحة تفتكر نفسها offline والحجز يفشل
         db.settings({ experimentalForceLongPolling: true, experimentalAutoDetectLongPolling: false, merge: true }); // الاتنين مع بعض بيوقّعوا الصفحة
-        const BOOKING_VERSION = '2.9';
+        const BOOKING_VERSION = '3.0';
         // ===== بيكسل فيسبوك (نفس الكود المتسجل في لوحة الموقع: settings/site → seo.pixel) =====
         // بيسجل PageView لكل زيارة، و Lead لكل حجز جديد (eventID = كود الحجز عشان يتطابق بعدين مع Conversions API)
         // ملحوظة: ممنوع نبعت اسم الخدمة أو التخصص لفيسبوك (بيعتبرها بيانات صحية وممكن يقيّد البيكسل) — الفرع بس.
@@ -76,6 +76,10 @@
         }
         // تخزين بسيط على جهاز الزائر (لو المتصفح مانعه بنكمّل عادي)
         const lsGet = k => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } };
+        // الأكواد اللي اتعملت من الجهاز ده (عشان صاحب الحجز يتابع من غير ما يكتب رقمه تاني)
+        const myCodes = () => { try { return JSON.parse(localStorage.getItem('ne_my_codes') || '[]'); } catch (e) { return []; } };
+        const addMyCode = c => { try { localStorage.setItem('ne_my_codes', JSON.stringify([c, ...myCodes().filter(x => x !== c)].slice(0, 20))); } catch (e) {} };
+        const digits = v => String(v || '').replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace(/\D/g, '');
         const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
         // منع إرسال الحجز/الاستشارة مرتين لو الزرار اتداس مرتين ورا بعض
         let SEND_LOCK = 0;
@@ -315,7 +319,7 @@
                             } catch (err) { if (err.message !== 'CODE_TAKEN') throw err; }
                         }
                         if (!res) throw new Error('CODE_TAKEN');
-                        neTrack('Lead', { branch: (branch && branch.name) || '' }, res.bookingCode); neCapi(res.bookingCode, base.phone); neGoogle(res.bookingCode);
+                        addMyCode(res.bookingCode); neTrack('Lead', { branch: (branch && branch.name) || '' }, res.bookingCode); neCapi(res.bookingCode, base.phone); neGoogle(res.bookingCode);
                         onDone({ ...res, branch });
                     }
                 } catch (err) {
@@ -404,7 +408,7 @@
                         catch (err) { if (err.message !== 'TAKEN') throw err; }
                     }
                     if (!code) throw new Error('TAKEN');
-                    neTrack('Contact', { content_category: 'consult' }, code);
+                    addMyCode(code); neTrack('Contact', { content_category: 'consult' }, code);
                     onDone({ code, ...data });
                 } catch (err) { console.error(err); alert('error', T('حصل خطأ، اتأكد من النت وجرب تاني', 'Something went wrong, check your connection')); }
                 setBusy(false); unlockSend();
@@ -435,6 +439,7 @@
         // ===================== متابعة بالكود =====================
         function Track({ pub, alert, onEdit, initialCode }) {
             const [code, setCode] = useState(initialCode || '');
+            const [last4, setLast4] = useState('');
             const [res, setRes] = useState(null);
             const [busy, setBusy] = useState(false);
             const [err, setErr] = useState('');
@@ -442,16 +447,22 @@
                 e && e.preventDefault(); setErr('');
                 const c = (c0 || code).toUpperCase().trim();
                 if (!/^[A-Z0-9]{3,12}$/.test(c)) { setErr(T('الكود غلط', 'Invalid code')); return; }
+                // حماية بيانات المريض: لازم آخر 4 أرقام من الموبايل مع الكود (إلا لو الحجز اتعمل من نفس الجهاز)
+                const mine = myCodes().includes(c), l4 = digits(last4);
+                if (!mine && l4.length !== 4) { setErr(T('اكتب آخر 4 أرقام من رقم الموبايل اللي حجزت بيه', 'Enter the last 4 digits of your phone number')); return; }
+                const phoneOk = d => mine || digits(d && d.phone).slice(-4) === l4;
                 setBusy(true);
                 try {
                     const bk = await db.collection('online_bookings').doc(c).get();
                     if (bk.exists) {
                         const ap = await db.collection('appointments').doc(bk.data().appointmentId).get();
                         if (!ap.exists) setErr(T('مفيش حجز بالكود ده', 'No booking with this code'));
-                        else setRes({ type: 'booking', id: ap.id, ...ap.data() });
+                        else if (!phoneOk(ap.data())) setErr(T('الكود أو رقم الموبايل مش مطابقين', 'Code and phone don\'t match'));
+                        else { addMyCode(c); setRes({ type: 'booking', id: ap.id, ...ap.data() }); }
                     } else {
                         const cs = await db.collection('consults').doc(c).get();
-                        if (cs.exists) setRes({ type: 'consult', id: cs.id, ...cs.data() });
+                        if (cs.exists && !phoneOk(cs.data())) setErr(T('الكود أو رقم الموبايل مش مطابقين', 'Code and phone don\'t match'));
+                        else if (cs.exists) { addMyCode(c); setRes({ type: 'consult', id: cs.id, ...cs.data() }); }
                         else setErr(T('مفيش حجز ولا استشارة بالكود ده', 'Nothing found with this code'));
                     }
                 } catch (x) { console.error(x); setErr(T('حصل خطأ في البحث', 'Search error')); }
@@ -476,7 +487,7 @@
             const b = res && pub.branches.find(x => x.id === res.branchId);
             return (
                 <div className="space-y-5">
-                    <form onSubmit={look} className="flex gap-2"><input value={code} onChange={e => setCode(e.target.value)} placeholder={T('اكتب الكود', 'Enter your code')} dir="ltr" className={inp + ' text-center font-mono tracking-widest uppercase'} /><button disabled={busy} className="bg-gray-900 text-white px-6 rounded-2xl font-black shrink-0">{busy ? '...' : T('بحث', 'Search')}</button></form>
+                    <form onSubmit={look} className="flex gap-2 flex-wrap"><input value={code} onChange={e => setCode(e.target.value)} placeholder={T('اكتب الكود', 'Enter your code')} dir="ltr" className={inp + ' text-center font-mono tracking-widest uppercase flex-1 min-w-0'} /><input value={last4} onChange={e => setLast4(e.target.value)} inputMode="numeric" maxLength={4} placeholder={T('آخر 4 أرقام', 'Last 4 digits')} dir="ltr" className={inp + ' text-center font-mono w-32 shrink-0'} /><button disabled={busy} className="bg-gray-900 text-white px-6 rounded-2xl font-black shrink-0">{busy ? '...' : T('بحث', 'Search')}</button></form>
                     {err && <p className="text-sm font-bold text-red-500 text-center">{err}</p>}
                     {res && res.type === 'booking' && <div className="bg-gray-50 rounded-2xl p-5 border border-gray-100 space-y-2 animate-fade-in">
                         <p className="font-black text-gray-900 text-lg">{res.patientName}</p>
