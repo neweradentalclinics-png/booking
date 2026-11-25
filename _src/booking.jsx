@@ -13,7 +13,7 @@
         const db = firebase.firestore();
         // اتصال Firestore بطريقة long polling: الاتصال المباشر (WebChannel) بيرجع 503 عند بعض شبكات النت فالصفحة تفتكر نفسها offline والحجز يفشل
         db.settings({ experimentalForceLongPolling: true, experimentalAutoDetectLongPolling: false, merge: true }); // الاتنين مع بعض بيوقّعوا الصفحة
-        const BOOKING_VERSION = '2.8';
+        const BOOKING_VERSION = '2.9';
         // ===== بيكسل فيسبوك (نفس الكود المتسجل في لوحة الموقع: settings/site → seo.pixel) =====
         // بيسجل PageView لكل زيارة، و Lead لكل حجز جديد (eventID = كود الحجز عشان يتطابق بعدين مع Conversions API)
         // ملحوظة: ممنوع نبعت اسم الخدمة أو التخصص لفيسبوك (بيعتبرها بيانات صحية وممكن يقيّد البيكسل) — الفرع بس.
@@ -153,7 +153,20 @@
             const [st, setSt] = useState(() => { const c = lsGet('ne_bk_pub'); return c && Array.isArray(c.branches) && c.branches.length ? { ...c, status: 'ok' } : { status: 'loading', branches: [], doctors: [], specialties: [], services: [] }; });
             useEffect(() => { if (st.status === 'ok' && st.branches.length) lsSet('ne_bk_pub', { branches: st.branches, doctors: st.doctors, specialties: st.specialties, services: st.services }); }, [st]);
             const [tryN, setTryN] = useState(0);
+            // توفير قراءات Firestore: البيانات العامة من النسخة المتخزنة على سيرفر الموقع (بتتحدّث كل نص ساعة)، ولو فشلت نقرا مباشر
+            const [live, setLive] = useState(false);
             useEffect(() => {
+                let dead = false;
+                const sortO = a => a.sort((x, y) => (x.order ?? 999) - (y.order ?? 999) || (x.name || '').localeCompare(y.name || '', 'ar'));
+                fetch('https://neweradentalcenter.com/api/public').then(r => r.ok ? r.json() : null).then(j => {
+                    if (dead) return;
+                    if (j && j.ok && Array.isArray(j.branches) && j.branches.length) setSt({ status: 'ok', branches: sortO(j.branches.slice()), doctors: j.doctors || [], specialties: sortO((j.specialties || []).slice()), services: sortO((j.services || []).slice()) });
+                    else setLive(true);
+                }).catch(() => { if (!dead) setLive(true); });
+                return () => { dead = true; };
+            }, []);
+            useEffect(() => {
+                if (!live) return;
                 const sortO = a => a.sort((x, y) => (x.order ?? 999) - (y.order ?? 999) || (x.name || '').localeCompare(y.name || '', 'ar'));
                 const map = s => s.docs.map(d => ({ id: d.id, ...d.data() }));
                 let t;
@@ -165,7 +178,7 @@
                     db.collection('services').onSnapshot(s => setSt(p => ({ ...p, services: sortO(map(s)).filter(x => x.active !== false) })), () => {})
                 ];
                 return () => { u.forEach(f => f()); clearTimeout(t); };
-            }, [tryN]);
+            }, [tryN, live]);
             return st;
         }
 
