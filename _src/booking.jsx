@@ -13,7 +13,7 @@
         const db = firebase.firestore();
         // اتصال Firestore بطريقة long polling: الاتصال المباشر (WebChannel) بيرجع 503 عند بعض شبكات النت فالصفحة تفتكر نفسها offline والحجز يفشل
         db.settings({ experimentalForceLongPolling: true, experimentalAutoDetectLongPolling: false, merge: true }); // الاتنين مع بعض بيوقّعوا الصفحة
-        const BOOKING_VERSION = '3.0';
+        const BOOKING_VERSION = '3.1';
         // ===== بيكسل فيسبوك (نفس الكود المتسجل في لوحة الموقع: settings/site → seo.pixel) =====
         // بيسجل PageView لكل زيارة، و Lead لكل حجز جديد (eventID = كود الحجز عشان يتطابق بعدين مع Conversions API)
         // ملحوظة: ممنوع نبعت اسم الخدمة أو التخصص لفيسبوك (بيعتبرها بيانات صحية وممكن يقيّد البيكسل) — الفرع بس.
@@ -26,7 +26,10 @@
         const NE_PIXEL = '865216456362855';
         try {
             !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');
-            window.fbq('init', NE_PIXEL); window.fbq('track', 'PageView');
+            // اسم الخدمة/القسم بيتشال من الرابط قبل ما البيكسل يقراه (الصفحة بتقرا النسخة الأصلية من __neQS)، والتجميع التلقائي لنصوص الزراير مقفول
+            window.__neQS = location.search;
+            try { const q = new URLSearchParams(location.search); if (q.has('service') || q.has('dept')) { q.delete('service'); q.delete('dept'); const qs = q.toString(); history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + location.hash); } } catch (e) { }
+            window.fbq('set', 'autoConfig', false, NE_PIXEL); window.fbq('init', NE_PIXEL); window.fbq('track', 'PageView');
         } catch (e) { }
         (() => {
             try {
@@ -46,7 +49,7 @@
                     // لو في لوحة الموقع بيكسل تاني غير الأساسي، بنشغّله كمان (الأساسي شغال من الأول)
                     const px = String(se.pixel || '').trim();
                     if (!/^\d{8,20}$/.test(px) || px === NE_PIXEL || !window.fbq) return;
-                    window.fbq('init', px); window.fbq('trackSingle', px, 'PageView');
+                    window.fbq('set', 'autoConfig', false, px); window.fbq('init', px); window.fbq('trackSingle', px, 'PageView');
                 }).catch(() => { });
             } catch (e) { }
         })();
@@ -87,7 +90,7 @@
         const unlockSend = () => { SEND_LOCK = 0; };
 
         // --- إعدادات الصفحة من الرابط: embed=1 (جوه الموقع) / lang=en / tab=book|consult|track / service=اسم الخدمة ---
-        const QS = new URLSearchParams(location.search);
+        const QS = new URLSearchParams(window.__neQS != null ? window.__neQS : location.search);
         const EMBED = QS.get('embed') === '1';
         const LANG = QS.get('lang') === 'en' ? 'en' : 'ar';
         const T = (ar, en) => LANG === 'en' ? en : ar;
